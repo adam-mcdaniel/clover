@@ -1,0 +1,27 @@
+type Point = struct { x: Int, y: Int, z: Int };
+let mut p: Point = { x: 1, y: 2, z: 3 };
+
+extern fun putint(n: Int);
+extern fun putstr(s: &Char);
+
+fun putpoint(p: Point) {
+    putstr("Point { x: ");
+    putint(p.x);
+    putstr(", y: ");
+    putint(p.y);
+    putstr(", z: ");
+    putint(p.z);
+    putstr("}");
+    putstr("\n");
+}
+
+fun make_point(x: Int, y: Int, z: Int) -> Point {
+    return { x, y, z };
+}
+
+p = { x: 3, y: 4, z: 5 };
+putpoint(p);
+p.x = 6;
+p.y = 7;
+p.z = 8;
+putpoint(p);

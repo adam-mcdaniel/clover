@@ -1,0 +1,36 @@
+extern fun putint(a: Int);
+extern fun putchar(a: Char);
+extern fun putstr(a: &Char);
+extern fun lt(a: Int, b: Int) -> Bool;
+extern fun add(a: Int, b: Int) -> Int;
+
+fun putln() {
+    putchar('\n');
+}
+
+let x = [1, 2, 3, 4, 5];
+
+putint(x[1]);
+putln();
+
+type Point = struct {
+    x: Int,
+    y: Int
+};
+
+fun putpoint(p: Point) {
+    putstr("Point { x: ");
+    putint(p.x);
+    putstr(", y: ");
+    putint(p.y);
+    putstr("}");
+}
+
+let p = [{ x: 1, y: 2 }, { x: 3, y: 4 }];
+
+let mut i = 0;
+while lt(i, lengthof(p)) {
+    putpoint(p[i]);
+    putln();
+    i = add(i, 1);
+}

@@ -3,6 +3,9 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet}, sync::{Mutex, RwLock},
     fmt::{Debug, Display, Formatter, Result as FmtResult},
 };
+use anyhow::{Context, Result};
+use thiserror::Error;
+use tracing::{field::Field, *};
 
 mod symbol;
 pub use symbol::*;
@@ -10,10 +13,9 @@ pub use symbol::*;
 mod parser;
 pub use parser::*;
 
-pub mod mage;
-use mage::*;
+pub mod codegen;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Mutability {
     Mutable,
     Immutable,
@@ -29,6 +31,21 @@ impl Mutability {
     }
 }
 
+impl Display for Mutability {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Mutability::Mutable => write!(f, "mutable"),
+            Mutability::Immutable => write!(f, "immutable"),
+        }
+    }
+}
+
+impl Debug for Mutability {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Display::fmt(self, f)
+    }
+}
+
 impl From<bool> for Mutability {
     fn from(value: bool) -> Self {
         if value {
@@ -39,13 +56,14 @@ impl From<bool> for Mutability {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Type {
     Named(Symbol),
     Int,
     Float,
     Bool,
     Char,
+    Cell,
     Unit,
     Pointer(Mutability, Box<Type>),
     Array(Box<Type>, usize),
@@ -57,7 +75,7 @@ pub enum Type {
 
 impl Type {
     pub fn is_primitive(&self) -> bool {
-        matches!(self, Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit)
+        matches!(self, Type::Int | Type::Float | Type::Bool | Type::Char | Type::Cell | Type::Unit)
     }
 
     pub fn is_pointer(&self) -> bool {
@@ -80,7 +98,7 @@ impl Type {
         matches!(self, Type::Union(_))
     }
 
-    pub fn get_variant_offset(&self, variant: &Symbol) -> Result<usize, CheckError> {
+    fn get_variant_index(&self, variant: &Symbol) -> Result<usize, CheckError> {
         use Type::*;
         match self {
             Enum(variants) => {
@@ -90,9 +108,9 @@ impl Type {
                     expr: Stmt::Expr(Expr::Var(variant.clone())).into(),
                 })
             },
-            _ => Err(CheckError::SelectNonStruct {
+            _ => Err(CheckError::VariantNotFound {
                 container: self.clone(),
-                field: variant.clone(),
+                variant: variant.clone(),
                 expr: Stmt::Expr(Expr::Var(variant.clone())).into(),
             }),
         }
@@ -133,6 +151,69 @@ impl Type {
     }
 }
 
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Type::Named(name) => write!(f, "{}", name),
+            Type::Int => write!(f, "Int"),
+            Type::Float => write!(f, "Float"),
+            Type::Bool => write!(f, "Bool"),
+            Type::Char => write!(f, "Char"),
+            Type::Cell => write!(f, "Cell"),
+            Type::Unit => write!(f, "Unit"),
+            Type::Pointer(Mutability::Immutable, ty) => write!(f, "&{}", ty),
+            Type::Pointer(Mutability::Mutable, ty) => write!(f, "&mut {}", ty),
+            Type::Array(ty, size) => write!(f, "[{} * {}]", ty, size),
+            Type::Struct(fields) => {
+                write!(f, "struct {{")?;
+                for (i, (field, ty)) in fields.iter().enumerate() {
+                    write!(f, "{}: {}", field, ty)?;
+                    if i < fields.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "}}")
+            }
+            Type::Enum(variants) => {
+                write!(f, "enum {{")?;
+                for (i, variant) in variants.iter().enumerate() {
+                    write!(f, "{}", variant)?;
+                    if i < variants.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "}}")
+            }
+            Type::Union(fields) => {
+                write!(f, "union {{")?;
+                for (i, (field, ty)) in fields.iter().enumerate() {
+                    write!(f, "{}: {}", field, ty)?;
+                    if i < fields.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "}}")
+            }
+            Type::Procedure(args, ret) => {
+                write!(f, "fun(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    write!(f, "{}", arg)?;
+                    if i < args.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ") -> {}", ret)
+            }
+        }
+    }
+}
+
+impl Debug for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Display::fmt(self, f)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SourceCodeLocation {
@@ -196,6 +277,7 @@ impl Display for ID {
 #[derive(Debug, Clone)]
 pub enum Metadata {
     Many(Vec<Self>),
+    Description(String),
     Location(SourceCodeLocation),
 }
 
@@ -207,6 +289,9 @@ impl std::fmt::Display for Metadata {
                     write!(f, "{}", m)?;
                 }
                 Ok(())
+            }
+            Metadata::Description(description) => {
+                write!(f, "{}", description)
             }
             Metadata::Location(location) => {
                 write!(f, "line: {}, column: {}, length: {}", location.line, location.column, location.length)
@@ -221,6 +306,12 @@ impl From<SourceCodeLocation> for Metadata {
     }
 }
 
+impl From<&str> for Metadata {
+    fn from(desc: &str) -> Self {
+        Metadata::Description(desc.to_string())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     Annotated(Metadata, Box<Self>),
@@ -229,19 +320,27 @@ pub enum Expr {
     Char(char),
     Float(f64),
     Bool(bool),
+    Str(String),
+    CStr(String),
     Var(Symbol),
     Ref(Mutability, Symbol),
     RefSelect(Mutability, Symbol, Symbol),
     App(Box<Self>, Vec<Self>),
     Array(Vec<Self>),
+    Cast(Box<Self>, Type),
 
-    Select(Symbol, Symbol),
+    Select(Box<Self>, Symbol),
     Index(Box<Self>, Box<Self>),
     Deref(Box<Self>),
 
     Struct(BTreeMap<Symbol, Self>),
     Enum(Type, Symbol),
     Union(Type, Symbol, Box<Self>),
+
+    LengthOfExpr(Box<Self>),
+    LengthOfType(Type),
+    SizeOfExpr(Box<Self>),
+    SizeOfType(Type),
 }
 
 impl Expr {
@@ -260,6 +359,75 @@ impl Expr {
         match self {
             Self::Annotated(_, expr) => expr.strip_annotations(),
             _ => self,
+        }
+    }
+}
+
+impl Display for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        use Expr::*;
+        match self.strip_annotations() {
+            SizeOfExpr(value) => write!(f, "sizeof({})", value),
+            SizeOfType(ty) => write!(f, "sizeof<{}>()", ty),
+            LengthOfExpr(value) => write!(f, "lengthof({})", value),
+            LengthOfType(ty) => write!(f, "lengthof<{}>()", ty),
+
+            Int(value) => write!(f, "{}", value),
+            Char(value) => write!(f, "{}", value),
+            Float(value) => write!(f, "{}", value),
+            Bool(value) => write!(f, "{}", value),
+            Str(value) => write!(f, "{:?}", value),
+            CStr(value) => write!(f, "c{:?}", value),
+            Cast(value, ty) => write!(f, "({} as {})", value, ty),
+            If(cond, then, else_) => write!(f, "if {} {} else {}", cond, then, else_),
+            Var(name) => write!(f, "{}", name),
+            Ref(mutability, name) => {
+                if *mutability == Mutability::Immutable {
+                    write!(f, "&{}", name)
+                } else {
+                    write!(f, "&mut {}", name)
+                }
+            }
+            RefSelect(mutability, container, field) => {
+                if *mutability == Mutability::Immutable {
+                    write!(f, "&{}.{}", container, field)
+                } else {
+                    write!(f, "&mut {}.{}", container, field)
+                }
+            }
+            App(func, args) => {
+                write!(f, "{}(", func)?;
+                for (i, arg) in args.iter().enumerate() {
+                    write!(f, "{}", arg)?;
+                    if i < args.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            Array(items) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    write!(f, "{}", item)?;
+                    if i < items.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "]")
+            }
+            Select(container, field) => write!(f, "{}.{}", container, field),
+            Index(container, index) => write!(f, "({})[{}]", container, index),
+            Deref(value) => write!(f, "*{}", value),
+            Struct(fields) => {
+                write!(f, "{{")?;
+                for (field, value) in fields {
+                    write!(f, "{}: {}, ", field, value)?;
+                }
+                write!(f, "}}")
+            }
+            Enum(_, variant) => write!(f, "{}", variant),
+            Union(_, variant, value) => write!(f, "{}({})", variant, value),
+            Annotated(..) => unreachable!(),
         }
     }
 }
@@ -324,7 +492,7 @@ impl From<bool> for Expr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Procedure {
     pub name: Symbol,
     pub args: Vec<(Mutability, Symbol, Type)>,
@@ -338,6 +506,26 @@ impl Procedure {
             self.args.iter().map(|(_, _, ty)| ty.clone()).collect(),
             Box::new(self.ret_ty.clone().unwrap_or(Type::Unit)),
         )
+    }
+}
+
+impl Display for Procedure {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "fun {}(", self.name)?;
+        for (i, (mutability, name, ty)) in self.args.iter().enumerate() {
+            write!(f, "{} {}: {} ", mutability, name, ty)?;
+            if i < self.args.len() - 1 {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ") -> {}", self.ret_ty.clone().unwrap_or(Type::Unit))?;
+        write!(f, " {}", self.body)
+    }
+}
+
+impl Debug for Procedure {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Display::fmt(self, f)
     }
 }
 
@@ -358,7 +546,23 @@ impl ExternProcedure {
     }
 }
 
-#[derive(Debug, Clone)]
+impl Display for ExternProcedure {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "extern fun {}(", self.name)?;
+        for (mutability, name, ty) in &self.args {
+            write!(f, "{} {}: {}, ", mutability, name, ty)?;
+        }
+        write!(f, ") -> {}", self.ret_ty.clone().unwrap_or(Type::Unit))?;
+        if let Some(body) = &self.body {
+            write!(f, " {}", body)
+        } else {
+            write!(f, ";")?;
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone)]
 pub enum Stmt {
     Annotated(Metadata, Box<Self>),
     Expr(Expr),
@@ -392,6 +596,62 @@ impl Stmt {
             Self::Annotated(_, stmt) => stmt.strip_annotations(),
             _ => self,
         }
+    }
+}
+
+impl Display for Stmt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        use Stmt::*;
+        match self.strip_annotations() {
+            Expr(expr) => write!(f, "{};", expr),
+            Return(expr) => write!(f, "return {};", expr),
+            Continue => write!(f, "continue;"),
+            Break => write!(f, "break;"),
+            DeclareVar { mutability: Mutability::Immutable, name, is_static, ty, value } => {
+                write!(f, "let ")?;
+                if *is_static {
+                    write!(f, "static ")?;
+                }
+                write!(f, "{name}")?;
+                if let Some(ty) = ty {
+                    write!(f, ": {ty}")?;
+                }
+                write!(f, " = {value};")
+            }
+            DeclareVar { mutability: Mutability::Mutable, name, is_static, ty, value } => {
+                write!(f, "let ")?;
+                if *is_static {
+                    write!(f, "static ")?;
+                }
+                write!(f, "mut {name}")?;
+                if let Some(ty) = ty {
+                    write!(f, ": {ty}")?;
+                }
+                write!(f, " = {value};")
+            }
+
+            DeclareProc(proc) => write!(f, "{};", proc),
+            DeclareType(name, ty) => write!(f, "type {} = {};", name, ty),
+            ExternProc(proc) => write!(f, "{}", proc),
+            AssignVar(name, value) => write!(f, "{} = {};", name, value),
+            AssignRef(dst, src) => write!(f, "{} = {};", dst, src),
+            While(cond, body) => write!(f, "while {} {};", cond, body),
+            If(cond, then, else_) => write!(f, "if {} {} else {}", cond, then, else_),
+            Block(stmts) => {
+                write!(f, "{{")?;
+                for stmt in stmts {
+                    write!(f, "{} ", stmt)?;
+                }
+                write!(f, "}}")
+            }
+            _ => unreachable!()
+        }
+    }
+}
+
+impl Debug for Stmt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Display::fmt(self, f)
     }
 }
 
@@ -473,50 +733,74 @@ pub fn stmt(expr: impl Into<Expr>) -> Stmt {
     Stmt::Expr(expr.into())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Error, Debug, Clone)]
 pub enum CheckError {
+    #[error("Mismatched mutability in {expr} (expected {expected}, but found {found})")]
     MismatchMutability {
         expected: Mutability,
         found: Mutability,
         expr: Stmt,
     },
+    #[error("Mismatched types in {expr} (expected {expected}, but found {found})")]
     MismatchType {
         expected: Type,
         found: Type,
         expr: Stmt,
     },
+    #[error("Field \"{name}\" not found {expr} (found type {container})")]
     FieldNotFound {
         container: Type,
         name: Symbol,
         expr: Stmt,
     },
+    #[error("Tried to get length of non array type {ty} used in {expr}")]
+    LengthOfNonArray {
+        ty: Type,
+        expr: Stmt,
+    },
+    #[error("Variable \"{name}\" not found in {expr}")]
     VariableNotFound {
         name: Symbol,
         expr: Stmt,
     },
+    #[error("Variant \"{variant}\" not found in type {container} used in {expr}")]
+    VariantNotFound {
+        container: Type,
+        variant: Symbol,
+        expr: Stmt,
+    },
+    #[error("Tried to get field \"{field}\" of non-struct type {container} used in {expr}")]
     SelectNonStruct {
         container: Type,
         field: Symbol,
         expr: Stmt,
     },
+    #[error("Type {ty} has infinite size in {expr}")]
+    InfiniteSize {
+        ty: Type,
+        expr: Stmt,
+    },
+    #[error("Type {0} not found")]
     TypeNotFound(Symbol),
+    #[error("Function {0} not found")]
     ProcNotFound(Symbol),
-    WithContext(Box<CheckError>, Metadata),
+    #[error("{0} ({1})")]
+    WithMetadata(Box<CheckError>, Metadata),
 }
 
-trait WithContext {
-    fn with_context(self, metadata: impl Into<Metadata>) -> Self;
+trait WithMetadata {
+    fn with_metadata(self, metadata: impl Into<Metadata>) -> Self;
 }
 
-impl WithContext for CheckError {
-    fn with_context(self, metadata: impl Into<Metadata>) -> Self {
-        CheckError::WithContext(Box::new(self), metadata.into())
+impl WithMetadata for CheckError {
+    fn with_metadata(self, metadata: impl Into<Metadata>) -> Self {
+        CheckError::WithMetadata(Box::new(self), metadata.into())
     }
 }
 
-impl<T> WithContext for Result<T, CheckError> {
-    fn with_context(self, metadata: impl Into<Metadata>) -> Self {
-        self.map_err(|e| e.with_context(metadata))
+impl<T> WithMetadata for Result<T, CheckError> {
+    fn with_metadata(self, metadata: impl Into<Metadata>) -> Self {
+        self.map_err(|e| e.with_metadata(metadata))
     }
 }
 
@@ -527,7 +811,6 @@ pub struct Env {
     statics: HashMap<Symbol, (Mutability, Type)>,
     procs: HashMap<Symbol, Procedure>,
     extern_procs: HashMap<Symbol, ExternProcedure>,
-    scope: ID,
 }
 
 impl Env {
@@ -536,7 +819,6 @@ impl Env {
             types: self.types.clone(),
             locals: HashMap::new(),
             statics: self.statics.clone(),
-            scope: ID::create(),
             procs: self.procs.clone(),
             extern_procs: self.extern_procs.clone(),
         }
@@ -547,14 +829,59 @@ impl Env {
             types: self.types.clone(),
             locals: self.locals.clone(),
             statics: self.statics.clone(),
-            scope: ID::create(),
             procs: self.procs.clone(),
             extern_procs: self.extern_procs.clone(),
         }
     }
 
-    pub fn add_type(&mut self, name: impl Into<Symbol>, ty: Type) {
-        self.types.insert(name.into(), ty);
+    pub fn add_type(&mut self, name: impl Into<Symbol>, ty: Type) -> Result<(), CheckError> {
+        let name = name.into();
+        self.types.insert(name.clone(), ty.clone());
+        self.detect_infinite_size_helper(&ty, &Stmt::DeclareType(name.clone(), ty.clone()), &mut HashSet::new())
+    }
+
+    fn detect_infinite_size_helper(&self, ty: &Type, expr: &Stmt, visited: &mut HashSet<Type>) -> Result<(), CheckError> {
+        if visited.contains(ty) {
+            return Err(CheckError::InfiniteSize {
+                ty: ty.clone(),
+                expr: expr.clone(),
+            });
+        }
+
+        match ty {
+            Type::Named(name) => {
+                // Add the type to the visited set
+                visited.insert(ty.clone());
+
+                if let Some(ty) = self.types.get(name) {
+                    self.detect_infinite_size_helper(ty, expr, visited)
+                } else {
+                    Ok(())
+                }
+            }
+            Type::Array(ty, _) => {
+                self.detect_infinite_size_helper(ty, expr, visited)
+            }
+            Type::Struct(fields) => {
+                for (_, ty) in fields {
+                    self.detect_infinite_size_helper(ty, expr, visited)?;
+                }
+                Ok(())
+            }
+            Type::Union(fields) => {
+                for (_, ty) in fields {
+                    self.detect_infinite_size_helper(ty, expr, visited)?;
+                }
+                Ok(())
+            }
+            Type::Procedure(args, ret) => {
+                for arg in args {
+                    self.detect_infinite_size_helper(arg, expr, visited)?;
+                }
+                self.detect_infinite_size_helper(ret, expr, visited)
+            }
+            Type::Pointer(..) | Type::Enum(..) | Type::Bool | Type::Char | Type::Float | Type::Int | Type::Cell | Type::Unit => Ok(()),
+        }
     }
 
     pub fn add_var(&mut self, is_static: bool, name: impl Into<Symbol>, mutability: Mutability, ty: Type) {
@@ -630,6 +957,23 @@ impl Env {
         }
         use Type::*;
         match (found, desired) {
+            (Named(a_name), Named(b_name)) => {
+                a_name == b_name || self.can_coerce_to(self.types.get(a_name).unwrap_or(found), desired)
+            }
+            (Named(a_name), _) => {
+                if let Some(ty) = self.types.get(a_name) {
+                    self.can_coerce_to(ty, desired)
+                } else {
+                    false
+                }
+            }
+            (_, Named(b_name)) => {
+                if let Some(ty) = self.types.get(b_name) {
+                    self.can_coerce_to(found, ty)
+                } else {
+                    false
+                }
+            }
             (Array(t1, len1), Array(t2, len2)) => {
                 if len1 != len2 {
                     return false;
@@ -638,17 +982,95 @@ impl Env {
             },
             (Array(t1, _), Pointer(_, t2)) => self.can_coerce_to(t1, t2),
             (Pointer(m1, t1), Pointer(m2, t2)) => {
+                // Check if the found type is an array
                 m1.can_use_as(*m2)
-                && self.can_coerce_to(t1, t2)
+                && (match &**t1 {
+                    Type::Array(elem_ty, _) => {
+                        // If it is, we can coerce it to a pointer
+                        self.can_coerce_to(&elem_ty, t2)
+                        || self.can_coerce_to(t1, t2)
+                    }
+                    _ => {
+                        // Otherwise, we need to check if the mutability matches
+                        self.can_coerce_to(t1, t2)
+                    }
+                })
             },
 
-            _ => false,
+            (Struct(fields1), Struct(fields2)) => {
+                fields1.len() == fields2.len()
+                && fields1.iter().all(|(name, ty1)| {
+                    fields2.get(name).map_or(false, |ty2| self.can_coerce_to(ty1, ty2))
+                })
+            }
+            (Enum(variants1), Enum(variants2)) => {
+                variants1 == variants2
+            }
+
+            (Union(fields1), Union(fields2)) => {
+                fields1.len() == fields2.len()
+                && fields1.iter().all(|(name, ty1)| {
+                    fields2.get(name).map_or(false, |ty2| self.can_coerce_to(ty1, ty2))
+                })
+            }
+
+            (Procedure(args1, ret1), Procedure(args2, ret2)) => {
+                args1.len() == args2.len()
+                && self.can_coerce_to(ret1, ret2)
+                && args1.iter().zip(args2).all(|(a1, a2)| self.can_coerce_to(a1, &a2))
+            }
+
+            (Union(variants), found)  | (found, Union(variants)) => {
+                if variants.iter().find(|(_, variant)| self.can_coerce_to(found, variant)).is_some() {
+                    match (self.get_type_size(found), self.get_type_size(desired)) {
+                        (Ok(found_size), Ok(desired_size)) => {
+                            if found_size != desired_size {
+                                return false;
+                            }
+                        }
+                        _ => {}
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+
+            (a, b) if a.is_primitive() && b.is_primitive() => {
+                match (self.get_type_size(a), self.get_type_size(b)) {
+                    (Ok(a_size), Ok(b_size)) => a_size == b_size,
+                    _ => false,
+                }
+            }
+            
+            (a, b) => {
+                debug!("Type mismatch, cannot coerce: {:?} != {:?}", a, b);
+                false
+            },
         }
     }
 
-    pub fn type_equals(&self, a: &Type, b: &Type) -> bool {
+    pub fn type_equals(&self, found: &Type, desired: &Type) -> bool {
+        trace!("ROOT CHECK: {:?} == {:?}", found, desired);
+        let result = self.type_equals_helper(found, desired, 20);
+        trace!("\n\n\n");
+        result
+    }
+
+    fn type_equals_helper(&self, found: &Type, desired: &Type, mut depth: usize) -> bool {
         use Type::*;
-        println!("Comparing {:?} with {:?}", a, b);
+        let a = found;
+        let b = desired;
+        trace!("Comparing {:?} with {:?} at depth {}", a, b, depth);
+        depth -= 1;
+        if a == b {
+            trace!("Types {a:?} and {b:?} are trivially equal");
+            return true;
+        }
+        if depth == 0 {
+            trace!("Types {a:?} and {b:?} are too deep to compare");
+            return false;
+        }
         match (a, b) {
             (Int, Int) => true,
             (Float, Float) => true,
@@ -657,18 +1079,18 @@ impl Env {
             (Unit, Unit) => true,
 
             (Named(a_name), Named(b_name)) => {
-                a_name == b_name || self.type_equals(self.types.get(a_name).unwrap_or(a), b)
+                a_name == b_name || self.type_equals_helper(self.types.get(a_name).unwrap_or(a), b, depth)
             }
             (Named(a_name), _) => {
                 if let Some(ty) = self.types.get(a_name) {
-                    self.type_equals(ty, b)
+                    self.type_equals_helper(ty, b, depth)
                 } else {
                     false
                 }
             }
             (_, Named(b_name)) => {
                 if let Some(ty) = self.types.get(b_name) {
-                    self.type_equals(a, ty)
+                    self.type_equals_helper(a, ty, depth)
                 } else {
                     false
                 }
@@ -676,7 +1098,7 @@ impl Env {
 
             (Struct(a_fields), Struct(b_fields)) => {
                 a_fields.len() == b_fields.len() && a_fields.iter().all(|(name, ty)| {
-                    b_fields.get(name).map_or(false, |b_ty| self.type_equals(ty, b_ty))
+                    b_fields.get(name).map_or(false, |b_ty| self.type_equals_helper(ty, b_ty, depth))
                 })
             }
 
@@ -684,20 +1106,22 @@ impl Env {
 
             (Union(a_fields), Union(b_fields)) => {
                 a_fields.len() == b_fields.len() && a_fields.iter().all(|(name, ty)| {
-                    b_fields.get(name).map_or(false, |b_ty| self.type_equals(ty, b_ty))
+                    b_fields.get(name).map_or(false, |b_ty| self.type_equals_helper(ty, b_ty, depth))
                 })
             }
 
             (Procedure(a_args, a_ret), Procedure(b_args, b_ret)) => {
-                a_args.len() == b_args.len() && a_ret == b_ret && a_args.iter().zip(b_args).all(|(a, b)| self.type_equals(a, &b))
+                a_args.len() == b_args.len() && a_ret == b_ret && a_args.iter().zip(b_args).all(|(a, b)| self.type_equals_helper(a, &b, depth))
             }
 
-            (Array(a_ty, a_size), Array(b_ty, b_size)) => a_size == b_size && self.type_equals(a_ty, b_ty),
+            (Array(a_ty, a_size), Array(b_ty, b_size)) => a_size == b_size && self.type_equals_helper(a_ty, b_ty, depth),
 
-            (Pointer(a_mut, a_ty), Pointer(b_mut, b_ty)) => a_mut == b_mut && self.type_equals(a_ty, b_ty),
+            (Pointer(a_mut, a_ty), Pointer(b_mut, b_ty)) => {
+                a_mut.can_use_as(*b_mut) && self.type_equals_helper(a_ty, b_ty, depth)
+            },
 
             (a, b) => {
-                // println!("Type mismatch: {:?} != {:?}", a, b);
+                // trace!("Type mismatch: {:?} != {:?}", a, b);
                 // false
                 self.can_coerce_to(a, b) || self.can_coerce_to(b, a)
             },
@@ -714,7 +1138,7 @@ impl Env {
             Enum(variants) => Enum(variants.clone()),
             Union(fields) => Union(fields.iter().map(|(name, ty)| (name.clone(), self.reduce_type(ty))).collect()),
             Procedure(args, ret) => Procedure(args.iter().map(|arg| self.reduce_type(arg)).collect(), Box::new(self.reduce_type(ret))),
-            Int | Float | Bool | Char | Unit => ty.clone(),
+            Int | Float | Bool | Char | Cell | Unit => ty.clone(),
         }
     }
 
@@ -722,11 +1146,42 @@ impl Env {
         use Expr::*;
         use CheckError::*;
         match expr {
+            LengthOfExpr(expr) => {
+                let ty = self.get_expr_type(expr)?;
+                // Confirm the type is an array
+                match ty {
+                    Type::Array(_, _) => Ok(Type::Int),
+                    _ => Err(LengthOfNonArray {
+                        ty,
+                        expr: expr.clone().into(),
+                    }).with_metadata("Getting length of non-array type"),
+                }
+            }
+            LengthOfType(ty) => {
+                // Confirm the type is an array
+                match ty {
+                    Type::Array(_, _) => Ok(Type::Int),
+                    _ => Err(LengthOfNonArray {
+                        ty: ty.clone(),
+                        expr: expr.clone().into(),
+                    }).with_metadata("Getting length of non-array type"),
+                }
+            }
+            SizeOfExpr(expr) => {
+                let ty = self.get_expr_type(expr)?;
+                let _size = self.get_type_size(&ty)?;
+                Ok(Type::Int)
+            }
+            SizeOfType(ty) => {
+                let _size = self.get_type_size(ty)?;
+                Ok(Type::Int)
+            },
+
             Var(name) => {
                 match self.get_var_type(name.clone()) {
                     Ok(ty) => Ok(ty),
                     Err(e) => {
-                        println!("Could not find variable {name:?} in scope {self:#?}");
+                        trace!("Could not find variable {name:?} in scope {self:#?}");
                         self.get_proc_type(name.clone()).map_err(|_| e)
                     }
                 }
@@ -739,7 +1194,7 @@ impl Env {
                     expected: Type::Pointer(Mutability::Immutable, Box::new(Type::Unit)),
                     found: ty,
                     expr: expr.clone().into(),
-                })
+                }).with_metadata("Dereferencing a non-pointer type")
             }
 
             Ref(desired_mutability, name) => {
@@ -749,7 +1204,7 @@ impl Env {
                         expected: *desired_mutability,
                         found: found_mutability,
                         expr: expr.clone().into(),
-                    });
+                    }).with_metadata("Taking reference of variable with mismatched mutability");
                 }
                 Ok(ty.refer(*desired_mutability))
             },
@@ -764,14 +1219,14 @@ impl Env {
                                 expected: *desired_mutability,
                                 found: found_container_mutability,
                                 expr: expr.clone().into(),
-                            });
+                            }).with_metadata("Taking reference of struct field with mismatched mutability");
                         }
 
                         let deref_ty = fields.get(name).cloned().ok_or(FieldNotFound {
                             container: container_ty,
                             name: name.clone(),
                             expr: expr.clone().into(),
-                        })?;
+                        }).with_metadata("Field not found in struct")?;
 
                         Ok(deref_ty.refer(*desired_mutability))
                     },
@@ -807,25 +1262,25 @@ impl Env {
                         expected: Type::Struct(BTreeMap::new()),
                         found: container_ty,
                         expr: expr.clone().into(),
-                    }),
+                    }).with_metadata("Taking reference of non-struct type"),
                 }
             },
 
             Annotated(metadata, expr) => {
-                self.get_expr_type(&expr.strip_annotations()).with_context(metadata.clone())
+                self.get_expr_type(&expr.strip_annotations()).with_metadata(metadata.clone())
             }
 
             Select(struct_, field) => {
-                let struct_ = Expr::Var(struct_.clone());
+                // let struct_ = Expr::Var(struct_.clone());
                 let struct_ty = self.get_expr_type(&struct_)?;
                 let struct_ty = self.reduce_type(&struct_ty);
                 match &struct_ty {
                     Type::Union(fields) | Type::Struct(fields) => {
-                        fields.get(field).cloned().ok_or(MismatchType {
-                            expected: Type::Unit,
-                            found: Type::Unit,
+                        fields.get(field).cloned().ok_or(FieldNotFound {
+                            container: struct_ty,
+                            name: field.clone(),
                             expr: expr.clone().into(),
-                        })
+                        }).with_metadata("Field not found in struct")
                     },
                     /*
                     Type::Pointer(_, ty) => {
@@ -850,7 +1305,7 @@ impl Env {
                         expected: Type::Struct(BTreeMap::new()),
                         found: struct_ty,
                         expr: expr.clone().into(),
-                    }),
+                    }).with_metadata("Tried to get field of non-struct type"),
                 }
             }
 
@@ -863,16 +1318,17 @@ impl Env {
                         expected: Type::Int,
                         found: index_ty,
                         expr: expr.clone().into(),
-                    });
+                    }).with_metadata("Indexing array with non-integer type");
                 }
 
                 match array_ty {
                     Type::Array(ty, _) => Ok(*ty),
+                    Type::Pointer(_, ty) => Ok(*ty),
                     _ => Err(MismatchType {
                         expected: Type::Array(Box::new(Type::Unit), 0),
                         found: array_ty,
                         expr: expr.clone().into(),
-                    }),
+                    }).with_metadata("Indexing a non-array type"),
                 }
             }
 
@@ -883,7 +1339,7 @@ impl Env {
                         expected: Type::Bool,
                         found: cond_ty,
                         expr: cond.clone().into(),
-                    });
+                    }).with_metadata("Condition of if statement is not a boolean");
                 }
                 let then_ty = self.get_expr_type(then)?;
                 let else_ty = self.get_expr_type(else_)?;
@@ -892,7 +1348,7 @@ impl Env {
                         expected: then_ty,
                         found: else_ty,
                         expr: expr.clone().into(),
-                    });
+                    }).with_metadata("Branches of if statement have different types");
                 }
                 Ok(then_ty)
             }
@@ -901,6 +1357,21 @@ impl Env {
             Char(_) => Ok(Type::Char),
             Float(_) => Ok(Type::Float),
             Bool(_) => Ok(Type::Bool),
+            Str(_) => Ok(Type::Char.refer(Mutability::Mutable)),
+            CStr(_) => Ok(Type::Cell.refer(Mutability::Mutable)),
+
+            Cast(cast_expr, ty) => {
+                let expr_ty = self.get_expr_type(cast_expr)?;
+                if !self.can_coerce_to(&expr_ty, ty) {
+                    error!("Cannot cast {expr_ty:?} to {ty:?}");
+                    return Err(MismatchType {
+                        expected: ty.clone(),
+                        found: expr_ty,
+                        expr: expr.clone().into(),
+                    }).with_metadata("Cannot cast expression to incompatible type");
+                }
+                Ok(ty.clone())
+            }
 
             App(f, args) => {
                 // Get the type of `f`
@@ -918,7 +1389,7 @@ impl Env {
                         expected: Type::Procedure(Vec::new(), Box::new(Type::Unit)),
                         found: f_ty,
                         expr: expr.clone().into(),
-                    }),
+                    }).with_metadata("Function application of non-function type"),
                 };
 
                 // Check if the number of arguments match
@@ -927,17 +1398,17 @@ impl Env {
                         expected: Type::Procedure(arg_tys.clone(), Box::new(Type::Unit)),
                         found: f_ty,
                         expr: expr.clone().into(),
-                    });
+                    }).with_metadata("Function application with wrong number of arguments");
                 }
 
                 // Check if the types of `args` match the params of `f`
                 for (arg_ty, param_ty) in arg_tys.iter().zip(param_tys) {
                     if !self.type_equals(arg_ty, param_ty) {
                         return Err(MismatchType {
-                            expected: Type::Procedure(arg_tys.clone(), Box::new(Type::Unit)),
-                            found: f_ty,
+                            expected: param_ty.clone(),
+                            found: arg_ty.clone(),
                             expr: expr.clone().into(),
-                        });
+                        }).with_metadata("Function application with wrong argument types");
                     }
                 }
 
@@ -950,14 +1421,14 @@ impl Env {
                     expected: Type::Unit,
                     found: Type::Unit,
                     expr: expr.clone().into(),
-                })?;
+                }).with_metadata("Empty array")?;
 
                 if !elem_tys.iter().all(|ty| self.type_equals(ty, &first_elem_ty)) {
                     return Err(MismatchType {
                         expected: first_elem_ty.clone(),
                         found: Type::Unit,
                         expr: expr.clone().into(),
-                    });
+                    }).with_metadata("Array elements have different types");
                 }
 
                 Ok(first_elem_ty.array(elems.len()))
@@ -1057,7 +1528,7 @@ impl Env {
                     if field_name == *desired_field_name {
                         return Ok(idx);
                     }
-                    idx += self.get_type_size(&field_ty);
+                    idx += self.get_type_size(&field_ty)?;
                 }
                 Err(CheckError::FieldNotFound {
                     container: ty.clone(),
@@ -1076,41 +1547,46 @@ impl Env {
         }
     }
 
+    /// Returns the index of the variant in the enum
+    pub fn get_variant_index(&self, ty: &Type, desired_variant_name: &Symbol) -> Result<usize, CheckError> {
+        self.reduce_type(ty).get_variant_index(desired_variant_name)
+    }
+
     /// Get the size of the type, in 64 bit integers
-    pub fn get_type_size(&self, ty: &Type) -> usize {
+    pub fn get_type_size(&self, ty: &Type) -> Result<usize, CheckError> {
         use Type::*;
-        match ty {
-            Int => 1,
-            Float => 1,
-            Bool => 1,
-            Char => 1,
+        Ok(match ty {
+            Cell | Int | Float | Bool | Char => 1,
             Unit => 0,
 
-            Named(name) => self.get_type_size(self.types.get(name).unwrap_or(ty)),
+            Named(name) => {
+                let ty = self.get_type(name.clone())?;
+                self.get_type_size(&ty)?
+            },
 
             Pointer(_, _) => 1,
 
-            Array(ty, len) => self.get_type_size(ty) * len,
+            Array(ty, len) => self.get_type_size(ty)? * len,
 
-            Struct(fields) => fields.values().map(|ty| self.get_type_size(ty)).sum(),
-            Union(fields) => fields.values().map(|ty| self.get_type_size(ty)).max().unwrap_or(0),
+            Struct(fields) => fields.values().map(|ty| self.get_type_size(ty)).collect::<Result<Vec<_>, _>>()?.into_iter().sum(),
+            Union(fields) => fields.values().map(|ty| self.get_type_size(ty)).collect::<Result<Vec<_>, _>>()?.into_iter().max().unwrap_or(0),
 
             Enum(_) => 1,
 
             Procedure(_, _) => 1,
-        }
+        })
     }
 
     /// Get the size of an expression, in 64 bit integers
     pub fn get_expr_size(&self, expr: &Expr) -> Result<usize, CheckError> {
         let ty = self.get_expr_type(expr)?;
-        Ok(self.get_type_size(&ty))
+        self.get_type_size(&ty)
     }
 
     /// Get the size of a variable, in 64 bit integers
     pub fn get_var_size(&self, name: impl Into<Symbol>) -> Result<usize, CheckError> {
         let ty = self.get_var_type(name)?;
-        Ok(self.get_type_size(&ty))
+        self.get_type_size(&ty)
     }
 
     pub fn check(&mut self, stmt: &Stmt) -> Result<(), CheckError> {
@@ -1120,7 +1596,7 @@ impl Env {
     fn check_helper(&mut self, stmt: &Stmt, expected_ret_ty: &Option<Type>) -> Result<(), CheckError> {
         match stmt {
             Stmt::Annotated(metadata, stmt) => {
-                self.check_helper(stmt.strip_annotations(), expected_ret_ty).with_context(metadata.clone())
+                self.check_helper(stmt.strip_annotations(), expected_ret_ty).with_metadata(metadata.clone())
             }
 
             Stmt::Expr(expr) => {
@@ -1145,7 +1621,7 @@ impl Env {
 
             Stmt::DeclareVar { mutability, name, is_static, ty, value } => {
                 let value_ty = self.get_expr_type(value)?;
-                let ty = ty.as_ref().unwrap_or(&value_ty);
+                let ty = &self.reduce_type(ty.as_ref().unwrap_or(&value_ty));
                 if !self.type_equals(ty, &value_ty) {
                     return Err(CheckError::MismatchType {
                         expected: ty.clone(),
@@ -1172,13 +1648,12 @@ impl Env {
                     new_env.add_var(false, name.clone(), *mutability, ty.clone());
                 }
                 // Check the body of the procedure
-                println!("\n\nChecking {proc:?} in scope:\n{new_env:#?}\n\n");
+                trace!("\n\nChecking {proc:?} in scope:\n{new_env:#?}\n\n");
                 new_env.check_helper(&proc.body, &proc.ret_ty)
             }
 
             Stmt::DeclareType(name, ty) => {
-                self.add_type(name.clone(), ty.clone());
-                Ok(())
+                self.add_type(name.clone(), ty.clone())
             }
 
             Stmt::ExternProc(proc) => {
@@ -1268,7 +1743,7 @@ impl Env {
                 for stmt in stmts {
                     env.check_helper(stmt, expected_ret_ty)?;
                 }
-                println!("\n\nChild scope:\n{env:#?}\n\n");
+                trace!("\n\nChild scope:\n{env:#?}\n\n");
                 Ok(())
             }
         }
@@ -1283,7 +1758,6 @@ impl Default for Env {
             procs: HashMap::new(),
             types: HashMap::new(),
             extern_procs: HashMap::new(),
-            scope: ID::create(),
         }
     }
 }
@@ -1291,8 +1765,9 @@ impl Default for Env {
 #[cfg(test)]
 mod tests {
     use nom::error::VerboseError;
-
+    
     use super::*;
+    use codegen::ToMage;
 
     #[test]
     fn test_symbol() {
@@ -1312,7 +1787,7 @@ mod tests {
         assert_eq!(env.get_type("float").unwrap(), Type::Float);
         assert!(env.get_type("string").is_err());
 
-        println!("\n\n{:#?}\n\n", env);
+        trace!("\n\n{:#?}\n\n", env);
         assert!(env.type_equals(&Type::Named("N".into()), &Type::Named("int".into())));
     }
 
@@ -1321,7 +1796,7 @@ mod tests {
         let input = r#"struct { x: Int, y: Int }"#;
 
         let (rest, ty) = parse_struct_type::<VerboseError<&str>>(input).unwrap();
-        println!("{:#?}", ty);
+        trace!("{:#?}", ty);
     }
 
     #[test]
@@ -1357,13 +1832,13 @@ mod tests {
             Ok(program) => program,
             Err(e) => panic!("Failed to parse: {e:#?}"),
         };
-        println!("{:#?}", program);
+        trace!("{:#?}", program);
         let mut ctx = Env::default();
         match ctx.check(&program) {
-            Ok(_) => println!("Check successful"),
-            Err(e) => println!("Check failed: {e:#?}"),
+            Ok(_) => trace!("Check successful"),
+            Err(e) => trace!("Check failed: {e:#?}"),
         }
-        println!("{:#?}\n\n", ctx);
+        trace!("{:#?}\n\n", ctx);
     }
 
 
@@ -1409,18 +1884,60 @@ mod tests {
             Ok(program) => program,
             Err(e) => panic!("Failed to parse: {e:#?}"),
         };
-        println!("{:#?}", program);
+        trace!("{:#?}", program);
         let mut ctx = Env::default();
         match ctx.check(&program) {
-            Ok(_) => println!("Check successful"),
-            Err(e) => println!("Check failed: {e:#?}"),
+            Ok(_) => trace!("Check successful"),
+            Err(e) => trace!("Check failed: {e:#?}"),
         }
-        // println!("{:#?}\n\n", ctx);
+        // trace!("{:#?}\n\n", ctx);
 
         // // Compile to mage
         let mut ctx = Env::default();
         let mage = program.compile_to_mage(&mut ctx).unwrap();
-        println!("MAGE:\n\n{}", mage);
+        trace!("MAGE:\n\n{}", mage);
+
+        // Write to `test.mg`
+        std::fs::write("test.mg", mage).unwrap();
+    }
+
+
+
+    #[test]
+    fn test_to_mage2() {
+        let input = r#"
+        type OpType = enum { Add, Mul, Div, Sub, Num };
+        type BinOp = struct {
+            op: OpType,
+            lhs: Op,
+            rhs: Op
+        };
+
+        type Op = union {
+            binop: BinOp,
+            num: Int
+        };
+
+
+        let x: Op = Op of binop { op: OpType of Add, lhs: Op of num 1, rhs: Op of num 2 };
+        "#;
+
+        let program = match parse(input) {
+            Ok(program) => program,
+            Err(e) => panic!("Failed to parse: {e:#?}"),
+        };
+        trace!("{:#?}", program);
+        let mut ctx = Env::default();
+        match ctx.check(&program) {
+            Ok(_) => trace!("Check successful"),
+            Err(e) => trace!("Check failed: {e:#?}"),
+        }
+        // trace!("{:#?}\n\n", ctx);
+
+        // // Compile to mage
+        let mut ctx = Env::default();
+        let mage = program.compile_to_mage(&mut ctx).unwrap();
+        trace!("MAGE:\n\n{}", mage);
 
         // Write to `test.mg`
         std::fs::write("test.mg", mage).unwrap();

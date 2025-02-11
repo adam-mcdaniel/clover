@@ -1,0 +1,34 @@
+type Point = struct { x: Int, y: Int, z: Int };
+let p = { x: 1, y: 2, z: 3 };
+
+extern fun putint(n: Int);
+extern fun putchar(c: Char);
+extern fun putstr(c: &Char);
+extern fun add(X: Int, Y: Int) -> Int;
+
+fun test(x: Int, y: Int) -> Int {
+    let z = add(x, y);
+    return z;
+}
+
+fun test2(p: Point) {
+    putint(p.x);
+    putchar(' ');
+    putint(p.y);
+    putchar(' ');
+    putint(p.z);
+    putchar('\n');
+}
+
+fun shift(mut p: Point, dx: Int, dy: Int) -> Point {
+    p.x = add(p.x, dx);
+    p.y = add(p.y, dy);
+    return p;
+}
+
+putint(test(1, 2));
+putchar('\n');
+
+test2(p);
+
+test2(shift(p, 1, 2));

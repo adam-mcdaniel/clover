@@ -1,0 +1,8 @@
+extern fun putcstr(s: &Cell);
+putcstr(c"Hello, world!\n");
+
+extern fun putstr(s: &Char);
+putstr("Hello, world!\n");
+
+putcstr("Hello, world!\n");
+putstr(c"Hello, world!\n");

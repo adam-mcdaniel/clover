@@ -4,7 +4,7 @@ use nom::{
     character::complete::{char, digit1, hex_digit1, multispace1, oct_digit1},
     combinator::{all_consuming, cut, map, map_opt, opt, recognize, verify},
     error::{ContextError, ParseError},
-    multi::{fold_many0, many0, many0_count, separated_list0},
+    multi::{fold_many0, many0, many1, many0_count, separated_list0},
     sequence::{delimited, pair, preceded, terminated, tuple, separated_pair},
     IResult, Parser,
 };
@@ -265,7 +265,7 @@ where
 
 /// Parse a string. Use a loop of parse_fragment and push all of the fragments
 /// into an output string.
-fn parse_string<'a, E>(input: &'a str) -> IResult<&'a str, String, E>
+fn parse_string<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, String, E>
 where
     E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
 {
@@ -331,7 +331,7 @@ fn parse_char_literal<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
 
 fn parse_string_literal<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
-) -> IResult<&'a str, String, E> {
+) -> IResult<&'a str, Expr, E> {
     // map(context(
     //   "string",
     //   alt((
@@ -339,11 +339,13 @@ fn parse_string_literal<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     //         preceded(char('"'), cut(terminated(parse_inner_str_double, char('"')))),
     //   )),
     // ), |s| s.to_string())(input)
-
-    if let Ok((input, s)) = parse_string::<VerboseError<&str>>(input) {
+    if let Ok((input, s)) = alt((
+        map(preceded(tag("c"), parse_string::<VerboseError<&str>>), Expr::CStr),
+        map(parse_string, Expr::Str)
+    ))(input) {
         Ok((input, s))
     } else {
-        Err(nom::Err::Error(E::from_error_kind(input, ErrorKind::Digit)))
+        Err(nom::Err::Error(E::from_error_kind(input, ErrorKind::Tag)))
     }
 }
 
@@ -390,19 +392,74 @@ fn parse_deref<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     Ok((input, Expr::Deref(expr.into())))
 }
 
-fn parse_expr<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+fn parse_cast<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Expr, E> {
+    let (input, expr) = parse_expr_term(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("as")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, ty) = parse_type(input)?;
+    Ok((input, Expr::Cast(expr.into(), ty)))
+}
+
+fn parse_app_select_or_index<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Expr, E> {
+    let (input, mut expr) = parse_expr_atom(input)?;
+    let (mut input, _) = whitespace(input)?;
+    loop {
+        match parse_expr_select_suffix::<E>(expr.clone(), input) {
+            Ok((new_input, new_expr)) => {
+                input = new_input;
+                expr = new_expr;
+                continue;
+            }
+            Err(_) => match parse_expr_index_suffix::<E>(expr.clone(), input) {
+                Ok((new_input, new_expr)) => {
+                    input = new_input;
+                    expr = new_expr;
+                    continue;
+                }
+                Err(_) => match parse_app_suffix::<E>(expr.clone(), input) {
+                    Ok((new_input, new_expr)) => {
+                        input = new_input;
+                        expr = new_expr;
+                        continue;
+                    }
+                    Err(_) => break,
+                },
+            },
+        }
+    }
+    
+    Ok((input, expr))
+}
+
+fn parse_expr_term<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, Expr, E> {
     let (input, _) = whitespace(input)?;
     let (input, result) = alt((
         parse_deref,
         parse_expr_ref_select,
-        parse_expr_select,
-        parse_app,
+        // parse_expr_select,
+        // parse_app,
+        parse_app_select_or_index,
         parse_expr_atom
     ))(input)?;
     let (input, _) = whitespace(input)?;
     Ok((input, result))
+}
+
+fn parse_expr<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Expr, E> {
+    alt((
+        parse_cast,
+        // parse_expr_index,
+        parse_expr_term
+    ))(input)
 }
 
 fn parse_array<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
@@ -472,17 +529,56 @@ fn parse_expr_union<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     Ok((input, Expr::Union(ty, name.into(), expr.into())))
 }
 
-fn parse_expr_select<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+// fn parse_expr_select<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+//     input: &'a str,
+// ) -> IResult<&'a str, Expr, E> {
+//     let (input, _) = whitespace(input)?;
+//     let (input, mut expr) = parse_expr_atom(input)?;
+//     let (input, _) = whitespace(input)?;
+//     let (input, selections) = many1(preceded(
+//         whitespace,
+//         delimited(tag("."), parse_symbol, whitespace),
+//     ))(input)?;
+//     // let (input, _) = tag(".")(input)?;
+//     // let (input, _) = whitespace(input)?;
+//     // let (input, field) = parse_symbol(input)?;
+//     for field in selections {
+//         expr = Expr::Select(expr.into(), field.into());
+//     }
+//     Ok((input, expr))
+// }
+
+
+fn parse_expr_select_suffix<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    mut expr: Expr,
     input: &'a str,
 ) -> IResult<&'a str, Expr, E> {
-    let (input, _) = whitespace(input)?;
-    let (input, expr) = parse_symbol(input)?;
-    let (input, _) = whitespace(input)?;
-    let (input, _) = tag(".")(input)?;
-    let (input, _) = whitespace(input)?;
-    let (input, field) = parse_symbol(input)?;
+    let (input, selections) = many1(preceded(
+        whitespace,
+        delimited(tag("."), parse_symbol, whitespace),
+    ))(input)?;
+    
+    for field in selections {
+        expr = Expr::Select(expr.into(), field.into());
+    }
 
-    Ok((input, Expr::Select(expr.into(), field.into())))
+    Ok((input, expr))
+}
+
+fn parse_expr_index_suffix<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    mut expr: Expr,
+    input: &'a str,
+) -> IResult<&'a str, Expr, E> {
+    let (input, indices) = many1(preceded(
+        whitespace,
+        delimited(preceded(whitespace, tag("[")), parse_expr, preceded(whitespace, tag("]"))),
+    ))(input)?;
+    
+    for field in indices {
+        expr = Expr::Index(expr.into(), field.into());
+    }
+
+    Ok((input, expr))
 }
 
 
@@ -510,36 +606,93 @@ fn parse_expr_ref_select<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     parse_expr_ref_select_inner(mutability, input)
 }
 
+fn parse_size_of_expr<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Expr, E> {
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("sizeof")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, expr) = parse_expr(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag(")")(input)?;
+
+    Ok((input, Expr::SizeOfExpr(expr.into())))
+}
+fn parse_size_of_type<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Expr, E> {
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("sizeof")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("<")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, ty) = parse_type(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag(">")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag(")")(input)?;
+
+    Ok((input, Expr::SizeOfType(ty.into())))
+}
+
+fn parse_length_of_expr<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Expr, E> {
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("lengthof")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, expr) = parse_expr(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag(")")(input)?;
+
+    Ok((input, Expr::LengthOfExpr(expr.into())))
+}
+
+fn parse_length_of_type<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Expr, E> {
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("lengthof")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("<")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, ty) = parse_type(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag(">")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag(")")(input)?;
+
+    Ok((input, Expr::LengthOfType(ty.into())))
+}
+
+
 fn parse_expr_atom<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, Expr, E> {
     let (input, _) = whitespace(input)?;
     let (input, result) = alt((
+        parse_size_of_expr,
+        parse_size_of_type,
+        parse_length_of_expr,
+        parse_length_of_type,
         parse_expr_struct,
         parse_expr_union,
         parse_expr_enum,
+        parse_string_literal,
         map(parse_float_literal, Expr::Float),
         map(parse_int_literal, Expr::Int),
         map(parse_char_literal, Expr::Char),
         map(parse_bool, Expr::Bool),
         map(parse_symbol, |s| Expr::Var(s.into())),
         parse_array,
-        map(parse_string_literal, |s| {
-            // Convert the string to a vector of bytes
-            let bytes = s.as_bytes().to_vec();
-            // Now concat the bytes into i64s (8 bytes at a time)
-            let mut result = Vec::new();
-            for byte in bytes {
-                // let mut bytes = [0; 8];
-                // for (i, &byte) in chunk.iter().enumerate() {
-                //     bytes[i] = byte;
-                // }
-                // result.push(i64::from_ne_bytes(bytes));
-                result.push(byte as char);
-            }
-            result.push(0 as char);
-            Expr::Array(result.into_iter().map(Expr::Char).collect())
-        }),
         delimited(
             char('('),
             preceded(whitespace, parse_expr),
@@ -572,11 +725,33 @@ fn parse_ref<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     Ok((input, ref_(mutability, result)))
 }
 
-fn parse_app<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+// fn parse_app<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+//     input: &'a str,
+// ) -> IResult<&'a str, Expr, E> {
+//     let (input, _) = whitespace(input)?;
+//     let (input, f) = parse_expr_atom(input)?;
+//     let (input, _) = whitespace(input)?;
+//     let (input, _) = tag("(")(input)?;
+//     let (input, mut args) = many0(terminated(
+//         preceded(whitespace, parse_expr),
+//         preceded(whitespace, char(',')),
+//     ))(input)?;
+//     // Check if there is a trailing comma
+//     let (input, last) = opt(preceded(whitespace, parse_expr))(input)?;
+//     if let Some(last) = last {
+//         args.push(last);
+//     }
+//     let (input, _) = whitespace(input)?;
+//     let (input, _) = tag(")")(input)?;
+//     Ok((input, app(f, args)))
+// }
+
+fn parse_app_suffix<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    expr: Expr,
     input: &'a str,
 ) -> IResult<&'a str, Expr, E> {
-    let (input, _) = whitespace(input)?;
-    let (input, f) = parse_expr_atom(input)?;
+    // let (input, _) = whitespace(input)?;
+    // let (input, f) = parse_expr_atom(input)?;
     let (input, _) = whitespace(input)?;
     let (input, _) = tag("(")(input)?;
     let (input, mut args) = many0(terminated(
@@ -590,7 +765,7 @@ fn parse_app<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     }
     let (input, _) = whitespace(input)?;
     let (input, _) = tag(")")(input)?;
-    Ok((input, app(f, args)))
+    Ok((input, app(expr, args)))
 }
 
 fn parse_if_expr<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
@@ -836,6 +1011,7 @@ fn parse_type<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str
         map(tag("Float"), |_| Type::Float),
         map(tag("Char"), |_| Type::Char),
         map(tag("Bool"), |_| Type::Bool),
+        map(tag("Cell"), |_| Type::Cell),
         parse_union_type,
         parse_enum_type,
         parse_array_type,
@@ -851,12 +1027,12 @@ fn parse_extern_proc<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: 
     let (input, _) = whitespace(input)?;
     let (input, _) = tag("extern")(input)?;
     let (input, _) = whitespace(input)?;
-    let (input, _) = tag("fun")(input)?;
+    let (input, _) = cut(tag("fun"))(input)?;
     let (input, _) = whitespace(input)?;
     let (input, name) = parse_symbol(input)?;
     let (input, _) = whitespace(input)?;
-    let (input, _) = tag("(")(input)?;
-    let (input, args) = separated_list0(delimited(whitespace, tag(","), whitespace), map(tuple((
+    let (input, _) = cut(tag("("))(input)?;
+    let (input, args) = cut(separated_list0(delimited(whitespace, tag(","), whitespace), map(tuple((
         whitespace,
         parse_mutability,
         whitespace,
@@ -865,19 +1041,19 @@ fn parse_extern_proc<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: 
         tag(":"),
         whitespace,
         parse_type,
-    )), |(_, mutability, _, name, _, _, _, ty)| (mutability, name, ty)))(input)?;
+    )), |(_, mutability, _, name, _, _, _, ty)| (mutability, name, ty))))(input)?;
 
     let (input, _) = whitespace(input)?;
     let (input, _) = opt(tag(","))(input)?;
     let (input, _) = whitespace(input)?;
-    let (input, _) = tag(")")(input)?;
+    let (input, _) = cut(tag(")"))(input)?;
     let (input, _) = whitespace(input)?;
     let (input, ret_ty) = opt(preceded(tag("->"), parse_type))(input)?;
     let (input, _) = whitespace(input)?;
-    let (input, body) = alt((
+    let (input, body) = cut(alt((
         value(None, tag(";")),
-        cut(map(parse_block, |stmts| Some(Stmt::Block(stmts)))),
-    ))(input)?;
+        map(parse_block, |stmts| Some(Stmt::Block(stmts))),
+    )))(input)?;
     let (input, _) = whitespace(input)?;
     Ok((input, extern_proc(name, args, ret_ty, body)))
 }
