@@ -396,12 +396,12 @@ fn repl() -> Result<()> {
     if let Ok(mut rl) = rustyline::Editor::new() {
         rl.set_helper(Some(MyHighlighter));
 
-        rl.load_history(".reckon_history").ok();
+        rl.load_history(".cage_history").ok();
         let mut current_input = String::new();
         let mut current_prompt = default_entry.clone();
         loop {
             let readline = rl.readline(&current_prompt);
-            if rl.save_history(".reckon_history").is_err() {
+            if rl.save_history(".cage_history").is_err() {
                 error!("Could not save history");
             }
             match readline {
