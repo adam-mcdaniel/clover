@@ -408,32 +408,65 @@ fn parse_app_select_or_index<'a, E: ParseError<&'a str> + ContextError<&'a str>>
 ) -> IResult<&'a str, Expr, E> {
     let (input, mut expr) = parse_expr_atom(input)?;
     let (mut input, _) = whitespace(input)?;
+    let mut found_one = false;
+    loop {
+        match parse_select_or_index_suffix::<E>(expr.clone(), input) {
+            Ok((new_input, new_expr)) => {
+                input = new_input;
+                expr = new_expr;
+                found_one = true;
+                continue;
+            }
+            Err(_) => match parse_app_suffix::<E>(expr.clone(), input) {
+                Ok((new_input, new_expr)) => {
+                    input = new_input;
+                    expr = new_expr;
+                    found_one = true;
+                    continue;
+                }
+                Err(_) => break,
+            },
+        }
+    }
+    if found_one {
+        Ok((input, expr))
+    } else {
+        Err(nom::Err::Error(E::from_error_kind(input, ErrorKind::Tag)))
+    }
+}
+
+fn parse_select_or_index_suffix<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    mut expr: Expr,
+    input: &'a str,
+) -> IResult<&'a str, Expr, E> {
+    let mut found_one = false;
+    let (mut input, _) = whitespace(input)?;
     loop {
         match parse_expr_select_suffix::<E>(expr.clone(), input) {
             Ok((new_input, new_expr)) => {
                 input = new_input;
                 expr = new_expr;
+                found_one = true;
                 continue;
             }
             Err(_) => match parse_expr_index_suffix::<E>(expr.clone(), input) {
                 Ok((new_input, new_expr)) => {
                     input = new_input;
                     expr = new_expr;
+                    found_one = true;
                     continue;
                 }
-                Err(_) => match parse_app_suffix::<E>(expr.clone(), input) {
-                    Ok((new_input, new_expr)) => {
-                        input = new_input;
-                        expr = new_expr;
-                        continue;
-                    }
-                    Err(_) => break,
+                Err(_) => {
+                    break
                 },
             },
         }
     }
-    
-    Ok((input, expr))
+    if found_one {
+        Ok((input, expr))
+    } else {
+        Err(nom::Err::Error(E::from_error_kind(input, ErrorKind::Tag)))
+    }
 }
 
 fn parse_expr_term<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
@@ -442,11 +475,11 @@ fn parse_expr_term<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     let (input, _) = whitespace(input)?;
     let (input, result) = alt((
         parse_deref,
-        parse_expr_ref_select,
+        // parse_expr_ref_select,
         // parse_expr_select,
         // parse_app,
         parse_app_select_or_index,
-        parse_expr_atom
+        parse_expr_atom,
     ))(input)?;
     let (input, _) = whitespace(input)?;
     Ok((input, result))
@@ -456,6 +489,7 @@ fn parse_expr<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, Expr, E> {
     alt((
+        parse_ref,
         parse_cast,
         // parse_expr_index,
         parse_expr_term
@@ -582,29 +616,29 @@ fn parse_expr_index_suffix<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
 }
 
 
-fn parse_expr_ref_select_inner<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
-    mutability: Mutability,
-    input: &'a str,
-) -> IResult<&'a str, Expr, E> {
-    let (input, _) = whitespace(input)?;
-    let (input, expr) = parse_symbol(input)?;
-    let (input, _) = whitespace(input)?;
-    let (input, _) = tag(".")(input)?;
-    let (input, _) = whitespace(input)?;
-    let (input, field) = parse_symbol(input)?;
+// fn parse_expr_ref_select_inner<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+//     mutability: Mutability,
+//     input: &'a str,
+// ) -> IResult<&'a str, Expr, E> {
+//     let (input, _) = whitespace(input)?;
+//     let (input, expr) = parse_symbol(input)?;
+//     let (input, _) = whitespace(input)?;
+//     let (input, _) = tag(".")(input)?;
+//     let (input, _) = whitespace(input)?;
+//     let (input, field) = parse_symbol(input)?;
 
-    Ok((input, Expr::RefSelect(mutability, expr.into(), field.into())))
-}
+//     Ok((input, Expr::Select(mutability, expr.into(), field.into())))
+// }
 
-fn parse_expr_ref_select<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
-    input: &'a str,
-) -> IResult<&'a str, Expr, E> {
-    let (input, _) = whitespace(input)?;
-    let (input, _) = tag("&")(input)?;
-    let (input, _) = whitespace(input)?;
-    let (input, mutability) = parse_mutability(input)?;
-    parse_expr_ref_select_inner(mutability, input)
-}
+// fn parse_expr_ref_select<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+//     input: &'a str,
+// ) -> IResult<&'a str, Expr, E> {
+//     let (input, _) = whitespace(input)?;
+//     let (input, _) = tag("&")(input)?;
+//     let (input, _) = whitespace(input)?;
+//     let (input, mutability) = parse_mutability(input)?;
+//     parse_expr_ref_select_inner(mutability, input)
+// }
 
 fn parse_size_of_expr<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
@@ -698,7 +732,6 @@ fn parse_expr_atom<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
             preceded(whitespace, parse_expr),
             preceded(whitespace, char(')')),
         ),
-        parse_ref,
         parse_if_expr,
     ))(input)?;
     let (input, _) = whitespace(input)?;
@@ -721,7 +754,7 @@ fn parse_ref<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     let (input, _) = whitespace(input)?;
     let (input, mutability) = parse_mutability(input)?;
     let (input, _) = whitespace(input)?;
-    let (input, result) = parse_symbol(input)?;
+    let (input, result) = parse_expr_term(input)?;
     Ok((input, ref_(mutability, result)))
 }
 
@@ -1144,21 +1177,22 @@ fn parse_assign_var<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: &
     Ok((input, assign_var(name, value)))
 }
 
-fn parse_assign_select<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, Stmt, E> {
+fn parse_assign_select_or_index<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, Stmt, E> {
     let (input, _) = whitespace(input)?;
-    let (input, ptr) = parse_expr_ref_select_inner(Mutability::Mutable, input)?;
+    let (input, expr) = parse_expr_atom(input)?;
+    let (input, expr) = parse_select_or_index_suffix(expr, input)?;
     let (input, _) = whitespace(input)?;
     let (input, _) = tag("=")(input)?;
     let (input, _) = whitespace(input)?;
     let (input, value) = parse_expr(input)?;
     let (input, _) = whitespace(input)?;
     let (input, _) = tag(";")(input)?;
-    Ok((input, assign_ref(ptr, value)))
+    Ok((input, assign_ref(Expr::Ref(Mutability::Mutable, expr.into()), value)))
 }
 
-fn parse_assign_value<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, Stmt, E> {
+fn parse_assign_deref<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, Stmt, E> {
     let (input, _) = whitespace(input)?;
-    let (input, _) = opt(tag("*"))(input)?;
+    let (input, _) = tag("*")(input)?;
     let (input, _) = whitespace(input)?;
     let (input, name) = parse_expr(input)?;
     let (input, _) = whitespace(input)?;
@@ -1172,7 +1206,7 @@ fn parse_assign_value<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input:
 
 fn parse_assign<'a, E: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, Stmt, E> {
     let (input, _) = whitespace(input)?;
-    let (input, stmt) = alt((parse_assign_select, parse_assign_var, parse_assign_value))(input)?;
+    let (input, stmt) = alt((parse_assign_var, parse_assign_deref, parse_assign_select_or_index))(input)?;
     Ok((input, stmt))
 }
 
@@ -1233,10 +1267,43 @@ pub fn parse(input: &str) -> anyhow::Result<Stmt> {
         .collect::<Vec<_>>()
         .join("\n");
     
-    parse_helper(&input)
+    parse_stmts_helper(&input)
 }
 
-fn parse_helper(input: &str) -> anyhow::Result<Stmt> {
+pub fn parse_single_stmt(input: &str) -> anyhow::Result<(String, Stmt)> {
+    // First, strip comments
+    *CURRENT_PROGRAM.lock().unwrap() = input.to_string();
+
+    let input = input
+        .lines()
+        .map(|line| {
+            if let Some(pos) = line.find("//") {
+                &line[..pos]
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    
+    // parse_stmt_helper(&input)
+    let (input, stmt) = parse_stmt_helper(&input)?;
+    Ok((input.to_string(), stmt))
+}
+
+fn parse_stmt_helper(input: &str) -> anyhow::Result<(&str, Stmt)> {
+    let (input, stmt) = parse_stmt(input).map_err(|e| {
+        match e {
+            nom::Err::Error(e) | nom::Err::Failure(e) => {
+                convert_error(input, e)
+            }
+            nom::Err::Incomplete(_) => unreachable!(),
+        }
+    }).map_err(anyhow::Error::msg)?;
+    Ok((input, stmt))
+}
+
+fn parse_stmts_helper(input: &str) -> anyhow::Result<Stmt> {
     let (_, stmts) = all_consuming(parse_stmts)(input).map_err(|e| {
         match e {
             nom::Err::Error(e) | nom::Err::Failure(e) => {

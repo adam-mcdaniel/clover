@@ -3,9 +3,9 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet}, sync::{Mutex, RwLock},
     fmt::{Debug, Display, Formatter, Result as FmtResult},
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use thiserror::Error;
-use tracing::{field::Field, *};
+use tracing::*;
 
 mod symbol;
 pub use symbol::*;
@@ -14,6 +14,9 @@ mod parser;
 pub use parser::*;
 
 pub mod codegen;
+
+mod interpreter;
+pub use interpreter::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Mutability {
@@ -320,11 +323,12 @@ pub enum Expr {
     Char(char),
     Float(f64),
     Bool(bool),
+    Unit,
     Str(String),
     CStr(String),
     Var(Symbol),
-    Ref(Mutability, Symbol),
-    RefSelect(Mutability, Symbol, Symbol),
+    Ref(Mutability, Box<Self>),
+    // RefSelect(Mutability, Symbol, Symbol),
     App(Box<Self>, Vec<Self>),
     Array(Vec<Self>),
     Cast(Box<Self>, Type),
@@ -371,7 +375,7 @@ impl Display for Expr {
             SizeOfType(ty) => write!(f, "sizeof<{}>()", ty),
             LengthOfExpr(value) => write!(f, "lengthof({})", value),
             LengthOfType(ty) => write!(f, "lengthof<{}>()", ty),
-
+            Unit => write!(f, "()"),
             Int(value) => write!(f, "{}", value),
             Char(value) => write!(f, "{}", value),
             Float(value) => write!(f, "{}", value),
@@ -383,18 +387,18 @@ impl Display for Expr {
             Var(name) => write!(f, "{}", name),
             Ref(mutability, name) => {
                 if *mutability == Mutability::Immutable {
-                    write!(f, "&{}", name)
+                    write!(f, "&({})", name)
                 } else {
-                    write!(f, "&mut {}", name)
+                    write!(f, "&mut ({})", name)
                 }
             }
-            RefSelect(mutability, container, field) => {
-                if *mutability == Mutability::Immutable {
-                    write!(f, "&{}.{}", container, field)
-                } else {
-                    write!(f, "&mut {}.{}", container, field)
-                }
-            }
+            // RefSelect(mutability, container, field) => {
+            //     if *mutability == Mutability::Immutable {
+            //         write!(f, "&{}.{}", container, field)
+            //     } else {
+            //         write!(f, "&mut {}.{}", container, field)
+            //     }
+            // }
             App(func, args) => {
                 write!(f, "{}(", func)?;
                 for (i, arg) in args.iter().enumerate() {
@@ -415,7 +419,7 @@ impl Display for Expr {
                 }
                 write!(f, "]")
             }
-            Select(container, field) => write!(f, "{}.{}", container, field),
+            Select(container, field) => write!(f, "({}).{}", container, field),
             Index(container, index) => write!(f, "({})[{}]", container, index),
             Deref(value) => write!(f, "*{}", value),
             Struct(fields) => {
@@ -432,8 +436,8 @@ impl Display for Expr {
     }
 }
 
-pub fn ref_(mutability: impl Into<Mutability>, name: impl ToString) -> Expr {
-    Expr::Ref(mutability.into(), name.to_string().into())
+pub fn ref_(mutability: impl Into<Mutability>, expr: impl Into<Expr>) -> Expr {
+    Expr::Ref(mutability.into(), Box::new(expr.into()))
 }
 
 pub fn var(name: impl ToString) -> Expr {
@@ -753,8 +757,13 @@ pub enum CheckError {
         name: Symbol,
         expr: Stmt,
     },
-    #[error("Tried to get length of non array type {ty} used in {expr}")]
+    #[error("Tried to get length of non-array type {ty} used in {expr}")]
     LengthOfNonArray {
+        ty: Type,
+        expr: Stmt,
+    },
+    #[error("Tried to index a non-array type {ty} used in {expr}")]
+    IndexNonArray {
         ty: Type,
         expr: Stmt,
     },
@@ -780,6 +789,11 @@ pub enum CheckError {
         ty: Type,
         expr: Stmt,
     },
+    #[error("Tried to take invalid reference of {expr} in {stmt}")]
+    InvalidRef {
+        expr: Expr,
+        stmt: Stmt,
+    },
     #[error("Type {0} not found")]
     TypeNotFound(Symbol),
     #[error("Function {0} not found")]
@@ -788,7 +802,7 @@ pub enum CheckError {
     WithMetadata(Box<CheckError>, Metadata),
 }
 
-trait WithMetadata {
+pub trait WithMetadata {
     fn with_metadata(self, metadata: impl Into<Metadata>) -> Self;
 }
 
@@ -1197,74 +1211,73 @@ impl Env {
                 }).with_metadata("Dereferencing a non-pointer type")
             }
 
-            Ref(desired_mutability, name) => {
-                let (found_mutability, ty) = self.get_var(name.clone())?;
-                if !found_mutability.can_use_as(*desired_mutability) {
-                    return Err(MismatchMutability {
-                        expected: *desired_mutability,
-                        found: found_mutability,
-                        expr: expr.clone().into(),
-                    }).with_metadata("Taking reference of variable with mismatched mutability");
-                }
-                Ok(ty.refer(*desired_mutability))
-            },
-            RefSelect(desired_mutability, container, name) => {
-                // let container_ty = self.get_expr_type(&Expr::Var(container.clone()))?;
-                let (found_container_mutability, container_ty) = self.get_var(container.clone())?;
-                let container_ty = self.reduce_type(&container_ty);
-                match &container_ty {
-                    Type::Struct(fields) | Type::Union(fields) => {
-                        if !found_container_mutability.can_use_as(*desired_mutability) {
-                            return Err(MismatchMutability {
-                                expected: *desired_mutability,
-                                found: found_container_mutability,
-                                expr: expr.clone().into(),
-                            }).with_metadata("Taking reference of struct field with mismatched mutability");
-                        }
+            Ref(desired_mutability, val) => {
 
-                        let deref_ty = fields.get(name).cloned().ok_or(FieldNotFound {
-                            container: container_ty,
-                            name: name.clone(),
-                            expr: expr.clone().into(),
-                        }).with_metadata("Field not found in struct")?;
-
-                        Ok(deref_ty.refer(*desired_mutability))
-                    },
-                    /*
-                    Type::Pointer(found_mutability, ty) => {
+                match val.strip_annotations() {
+                    Var(name) => {
+                        let (found_mutability, ty) = self.get_var(name.clone())?;
                         if !found_mutability.can_use_as(*desired_mutability) {
                             return Err(MismatchMutability {
                                 expected: *desired_mutability,
-                                found: *found_mutability,
+                                found: found_mutability,
                                 expr: expr.clone().into(),
-                            });
+                            }).with_metadata("Taking reference of variable with mismatched mutability");
                         }
 
-                        match &**ty {
-                            Type::Struct(fields) | Type::Union(fields) => {
-                                let deref_ty = fields.get(name).cloned().ok_or(FieldNotFound {
-                                    container: container_ty,
-                                    name: name.clone(),
-                                    expr: expr.clone().into(),
-                                })?;
+                        Ok(ty.refer(*desired_mutability))
+                    },
+                    Select(expr, _) => {
+                        // Try to get the type a reference to inner value
+                        let _ref_expr = Expr::Ref(*desired_mutability, expr.clone());
+                        let ty = self.get_expr_type(&val)?;
 
-                                Ok(deref_ty.refer(*desired_mutability))
-                            },
-                            _ => Err(MismatchType {
-                                expected: Type::Struct(BTreeMap::new()),
-                                found: container_ty,
-                                expr: expr.clone().into(),
-                            }),
-                        }
-                    }
-                     */
-                    _ => Err(MismatchType {
-                        expected: Type::Struct(BTreeMap::new()),
-                        found: container_ty,
-                        expr: expr.clone().into(),
-                    }).with_metadata("Taking reference of non-struct type"),
+                        Ok(ty.refer(*desired_mutability))
+                    },
+                    Index(_ptr, _) => {
+                        let ty = self.get_expr_type(val)?;
+                        Ok(ty.refer(*desired_mutability))
+                    },
+                    Deref(_ptr) => {
+                        let ty = self.get_expr_type(val)?;
+                        Ok(ty.refer(*desired_mutability))
+                    },
+                    other => {
+                        error!("Taking reference of {other:?}");
+                        Err(InvalidRef {
+                            expr: other.clone(),
+                            stmt: expr.clone().into(),
+                        }).with_metadata("Taking reference of non-variable, non-deref, non-index, and non-select expression")
+                    },
                 }
+
             },
+            // RefSelect(desired_mutability, container, name) => {
+            //     // let container_ty = self.get_expr_type(&Expr::Var(container.clone()))?;
+            //     let (found_container_mutability, container_ty) = self.get_var(container.clone())?;
+            //     let container_ty = self.reduce_type(&container_ty);
+            //     match &container_ty {
+            //         Type::Struct(fields) | Type::Union(fields) => {
+            //             if !found_container_mutability.can_use_as(*desired_mutability) {
+            //                 return Err(MismatchMutability {
+            //                     expected: *desired_mutability,
+            //                     found: found_container_mutability,
+            //                     expr: expr.clone().into(),
+            //                 }).with_metadata("Taking reference of struct field with mismatched mutability");
+            //             }
+            //             let deref_ty = fields.get(name).cloned().ok_or(FieldNotFound {
+            //                 container: container_ty,
+            //                 name: name.clone(),
+            //                 expr: expr.clone().into(),
+            //             }).with_metadata("Field not found in struct")?;
+            //             Ok(deref_ty.refer(*desired_mutability))
+            //         },
+            //         _ => Err(MismatchType {
+            //             expected: Type::Struct(BTreeMap::new()),
+            //             found: container_ty,
+            //             expr: expr.clone().into(),
+            //         }).with_metadata("Taking reference of non-struct type"),
+            //     }
+            // },
 
             Annotated(metadata, expr) => {
                 self.get_expr_type(&expr.strip_annotations()).with_metadata(metadata.clone())
@@ -1324,9 +1337,8 @@ impl Env {
                 match array_ty {
                     Type::Array(ty, _) => Ok(*ty),
                     Type::Pointer(_, ty) => Ok(*ty),
-                    _ => Err(MismatchType {
-                        expected: Type::Array(Box::new(Type::Unit), 0),
-                        found: array_ty,
+                    _ => Err(IndexNonArray {
+                        ty: array_ty,
                         expr: expr.clone().into(),
                     }).with_metadata("Indexing a non-array type"),
                 }
@@ -1353,6 +1365,7 @@ impl Env {
                 Ok(then_ty)
             }
 
+            Unit => Ok(Type::Unit),
             Int(_) => Ok(Type::Int),
             Char(_) => Ok(Type::Char),
             Float(_) => Ok(Type::Float),
@@ -1450,7 +1463,7 @@ impl Env {
                         expected: Type::Enum(BTreeSet::new()),
                         found: ty,
                         expr: expr.clone().into(),
-                    });
+                    }).with_metadata("Checking enum variant of non-enum type");
                 }
 
                 // Check if the variant is actually a variant of the enum
@@ -1460,14 +1473,14 @@ impl Env {
                             expected: Type::Enum(variants.clone()),
                             found: Type::Unit,
                             expr: expr.clone().into(),
-                        });
+                        }).with_metadata("Enum does not contain variant");
                     }
                 } else {
                     return Err(MismatchType {
                         expected: Type::Enum(BTreeSet::new()),
                         found: ty,
                         expr: expr.clone().into(),
-                    });
+                    }).with_metadata("Checking enum variant of non-enum type");
                 }
 
                 Ok(ty)
@@ -1481,7 +1494,7 @@ impl Env {
                         expected: Type::Union(BTreeMap::new()),
                         found: ty,
                         expr: expr.clone().into(),
-                    });
+                    }).with_metadata("Checking union variant of non-union type");
                 }
 
                 // Check if the variant is actually a variant of the union
@@ -1492,7 +1505,7 @@ impl Env {
                             expected: Type::Union(variants.clone()),
                             found: Type::Unit,
                             expr: expr.clone().into(),
-                        });
+                        }).with_metadata("Union does not contain variant");
                     }
 
                     let expected_ty = variants.get(variant).unwrap();
@@ -1501,14 +1514,14 @@ impl Env {
                             expected: expected_ty.clone(),
                             found: value_ty,
                             expr: expr.clone().into(),
-                        });
+                        }).with_metadata("Union variant does not match expected type");
                     }
                 } else {
                     return Err(MismatchType {
                         expected: Type::Union(BTreeMap::new()),
                         found: ty,
                         expr: expr.clone().into(),
-                    });
+                    }).with_metadata("Checking union variant of non-union type");
                 }
 
                 Ok(ty)
@@ -1611,7 +1624,7 @@ impl Env {
                             expected: expected_ret_ty.clone(),
                             found: ret_ty,
                             expr: stmt.clone(),
-                        });
+                        }).with_metadata("Return value does not match expected return type");
                     }
                 }
                 Ok(())
@@ -1627,7 +1640,7 @@ impl Env {
                         expected: ty.clone(),
                         found: value_ty,
                         expr: stmt.clone(),
-                    });
+                    }).with_metadata("Declared variable type does not match initializer type");
                 }
                 self.add_var(*is_static, name.clone(), *mutability, value_ty);
                 Ok(())
@@ -1686,7 +1699,7 @@ impl Env {
                         expected: expected_ty,
                         found: found_ty,
                         expr: stmt.clone(),
-                    })
+                    }).with_metadata("Assignment type does not match variable type");
                 }
 
                 Ok(())
@@ -1700,14 +1713,14 @@ impl Env {
                     expected: Type::Pointer(Mutability::Mutable, Box::new(Type::Unit)),
                     found: dst_ty,
                     expr: stmt.clone(),
-                })?;
+                }).with_metadata("Dereferencing a non-pointer type")?;
 
                 if !self.type_equals(&dst_ty_deref, &src_ty) {
                     return Err(CheckError::MismatchType {
                         expected: dst_ty_deref.clone(),
                         found: src_ty,
                         expr: stmt.clone(),
-                    });
+                    }).with_metadata("Assignment type does not match variable type");
                 }
 
                 Ok(())
@@ -1720,7 +1733,7 @@ impl Env {
                         expected: Type::Bool,
                         found: cond_ty,
                         expr: stmt.clone(),
-                    });
+                    }).with_metadata("Condition of while loop is not a boolean");
                 }
                 self.check_helper(body, expected_ret_ty)
             }
@@ -1732,7 +1745,7 @@ impl Env {
                         expected: Type::Bool,
                         found: cond_ty,
                         expr: stmt.clone(),
-                    });
+                    }).with_metadata("Condition of if statement is not a boolean");
                 }
                 self.check_helper(then, expected_ret_ty)?;
                 self.check_helper(else_, expected_ret_ty)

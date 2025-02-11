@@ -11,9 +11,10 @@ pub trait ToMage {
 }
 
 // const RETURN_VARIABLE: &str = "__MAGE__return_value";
-const MAGE_PRELUDE: &str = r#"extern fun cage_add(cage_a, cage_b);
+pub const MAGE_PRELUDE: &str = r#"extern fun cage_add(cage_a, cage_b);
 extern fun cage_sub(cage_a, cage_b);
 extern fun cage_mul(cage_a, cage_b);
+extern fun cage_neg(cage_a);
 extern fun cage_puts(cage_value);
 extern fun cage_puthex(cage_value);
 extern fun cage_putarr(cage_ptr, cage_len);
@@ -73,7 +74,7 @@ fun cage_select(cage_idx_into_struct, cage_idx_len, cage_total_size) {
 }
 
 fun cage_ret(cage_ebp, cage_count) {
-    let cage_current_sp = cage_SP;
+    let cage_current_sp = cage_sub(cage_SP, cage_count);
     // cage_Revert cage_stack cage_pointer
     cage_SP = cage_add(cage_ebp, cage_count);
     // cage_Copy return cage_values cage_to cage_stack
@@ -121,7 +122,7 @@ impl ToMage for ExternProcedure {
                     expected: ty.clone(),
                     found: Type::Int,
                     expr: Stmt::ExternProc(self.clone())
-                });
+                }).with_metadata("Error while translating extern proc to mage");
             }
             if i > 0 {
                 result.push_str(", ");
@@ -299,6 +300,9 @@ impl ToMage for Expr {
             Float(val) => {
                 Ok(format!("    cage_push({});\n", val))
             }
+            Unit => {
+                Ok(format!(""))
+            }
             Cast(val, _ty) => {
                 Ok(val.to_mage(ctx)?)
             }
@@ -400,41 +404,126 @@ impl ToMage for Expr {
             Index(arr, idx) => {
                 let mut result = String::new();
                 let arr_size = ctx.get_expr_size(arr)?;
-                let val_size = ctx.get_expr_size(self)?;
+                let arr_ty = ctx.get_expr_type(arr)?;
                 let id = ID::create();
-                if arr_size == 1 {
-                    result += &arr.to_mage(ctx)?;
-                    result += &idx.to_mage(ctx)?;
-    
-                    result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
-                    result += &format!("    let __EXTERN__array_{id} = cage_pop();\n");
-                    result += &format!("    cage_pusharr(cage_idx(__EXTERN__array_{id}, cage_mul(__EXTERN__index_{id}, {val_size})), {val_size});\n");
-                } else {
-                    // Get the index into the struct
-                    let arr_ty = ctx.get_expr_type(arr)?;
-                    let val_size = ctx.get_expr_size(self)?;
+                match arr_ty {
+                    Type::Pointer(_, elem_ty) => {
+                        result += &arr.to_mage(ctx)?;
+                        result += &idx.to_mage(ctx)?;
 
-                    result += &arr.to_mage(ctx)?;
-                    result += &idx.to_mage(ctx)?;
-                    result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
-                    result += &format!("    cage_select(cage_mul(__EXTERN__index_{id}, {val_size}), {val_size}, {arr_size});\n");
+                        let elem_size = ctx.get_type_size(&elem_ty)?;
+        
+                        result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
+                        result += &format!("    let __EXTERN__array_{id} = cage_pop();\n");
+                        result += &format!("    cage_pusharr(cage_idx(__EXTERN__array_{id}, cage_mul(__EXTERN__index_{id}, {elem_size})), {elem_size});\n");
+                    }
+                    Type::Array(elem_ty, _) => {
+                        // Get the index into the struct
+                        let elem_size = ctx.get_type_size(&elem_ty)?;
+                        result += &arr.to_mage(ctx)?;
+                        result += &idx.to_mage(ctx)?;
+                        result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
+                        result += &format!("    cage_select(cage_mul(__EXTERN__index_{id}, {elem_size}), {elem_size}, {arr_size});\n");
+                    }
+                    _ => {
+                        return Err(CheckError::IndexNonArray {
+                            ty: arr_ty,
+                            expr: self.clone().into()
+                        }).with_metadata("Error while translating index to mage");
+                    }
                 }
                 Ok(result)
             }
 
-            Ref(_, name) => {
-                Ok(format!("    cage_push({name});\n"))
-            }
-
-            RefSelect(_, container, field) => {
+            Ref(desired_mutability, expr) => {
                 let mut result = String::new();
-                let container_ty = ctx.get_var_type(container.clone())?;
-                // Push the field based on the select offset
-                let select_offset = ctx.get_field_offset(&container_ty, field)?;
-                result += &format!("    cage_push(cage_idx({container}, {select_offset}));\n");
+                match &**expr {
+                    Expr::Var(name) => {
+                        Ok(format!("    cage_push({name});\n"))
+                    }
+                    Expr::Select(container, field) => {
+                        result += Expr::Ref(*desired_mutability, container.clone().into()).to_mage(ctx)?.as_str();
+                        let container_ty = ctx.get_expr_type(container)?;
+                        let select_offset = ctx.get_field_offset(&container_ty, field)?;
+                        result += &format!("    cage_push(cage_idx(cage_pop(), {select_offset}));\n");
 
-                Ok(result)
+                        Ok(result)
+                        // match container.strip_annotations() {
+                        //     Expr::Var(_) => {
+                        //         let container_ty = ctx.get_expr_type(container)?;
+                        //         let select_offset = ctx.get_field_offset(&container_ty, field)?;
+                        //         result += &container.to_mage(ctx)?;
+                        //         result += &format!("    cage_push(cage_add(cage_pop(), {select_offset}));\n");
+                        //         Ok(result)
+                        //     }
+                        //     other => {
+                        //         // Get a reference to the container
+                        //     }
+                        // }
+                    }
+                    Expr::Deref(container) => {
+                        container.to_mage(ctx)
+                    }
+                    Expr::Index(arr, idx) => {
+                        let mut result = String::new();
+                        let arr_ty = ctx.get_expr_type(arr)?;
+                        let id = ID::create();
+                        match arr_ty {
+                            Type::Pointer(_, elem_ty) => {
+                                result += &arr.to_mage(ctx)?;
+                                result += &idx.to_mage(ctx)?;
+                                let val_size = ctx.get_type_size(&elem_ty)?;
+                
+                                result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
+                                result += &format!("    let __EXTERN__array_{id} = cage_pop();\n");
+                                result += &format!("    cage_push(cage_idx(__EXTERN__array_{id}, cage_mul(__EXTERN__index_{id}, {val_size})));\n");
+                            }
+                            Type::Array(elem_ty, ..) => {
+                                result += &Expr::Ref(*desired_mutability, arr.clone()).to_mage(ctx)?;
+                                result += &idx.to_mage(ctx)?;
+                                let val_size = ctx.get_type_size(&elem_ty)?;
+                
+                                result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
+                                result += &format!("    let __EXTERN__array_{id} = cage_pop();\n");
+                                result += &format!("    cage_push(cage_idx(__EXTERN__array_{id}, cage_mul(__EXTERN__index_{id}, {val_size})));\n");
+                            }
+                            _ => {
+                                return Err(CheckError::InvalidRef { expr: self.clone(), stmt: self.clone().into() }).with_metadata("Error while translating index to mage");
+                            }
+                        }
+
+                        // if arr_size == 1 {
+                        // } else {
+                        //     // Get the index into the struct
+                        //     let arr_ty = ctx.get_expr_type(arr)?;
+                        //     let val_size = ctx.get_expr_size(self)?;
+        
+                        //     result += &arr.to_mage(ctx)?;
+                        //     result += &idx.to_mage(ctx)?;
+                        //     result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
+                        //     result += &format!("    cage_select(cage_mul(__EXTERN__index_{id}, {val_size}), {val_size}, {arr_size});\n");
+                        // }
+                        Ok(result)
+                    }
+                    _ => {
+                        // Get the size of the value
+                        let val_size = ctx.get_expr_size(expr)?;
+                        result += &expr.to_mage(ctx)?;
+                        result += &format!("    cage_pusharr(cage_pop(), {val_size});\n");
+                        Ok(result)
+                    }
+                }
+                // Ok(format!("    cage_push({name});\n"))
             }
+            // RefSelect(_, container, field) => {
+            //     let mut result = String::new();
+            //     let container_ty = ctx.get_var_type(container.clone())?;
+            //     // Push the field based on the select offset
+            //     let select_offset = ctx.get_field_offset(&container_ty, field)?;
+            //     result += &format!("    cage_push(cage_idx({container}, {select_offset}));\n");
+
+            //     Ok(result)
+            // }
             Array(vals) => {
                 let mut result = String::new();
                 for val in vals {

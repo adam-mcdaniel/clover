@@ -12,7 +12,7 @@ int64_t as_int(double x) { return *(int64_t*)&x; }
 double as_float(int64_t x) { return *(double*)&x; }
 
 int64_t _cage_memcpy(int64_t dst, int64_t src, int64_t len) {
-    memcpy((void*)dst, (void*)src, len);
+    memcpy((void*)dst, (void*)src, len * sizeof(int64_t));
     return 0;
 }
 
