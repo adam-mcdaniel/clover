@@ -92,7 +92,7 @@ impl ToMage for Procedure {
         // pub body: Box<Stmt>,
 
         // Keep the name the same
-        let mut result = format!("fun {}() {{", self.name);
+        let mut result = format!("fun clover_user_{}() {{", self.name);
         // Pop the arguments off the stack in reverse order
         let mut total_size = 0;
         for (mutability, name, ty) in self.args.iter().rev() {
@@ -156,7 +156,12 @@ impl ToMage for Stmt {
             Annotated(metadata, stmt) => {
                 stmt.to_mage(ctx).with_metadata(metadata.clone())
             } 
-            Expr(e) => e.to_mage(ctx),
+            Expr(e) => {
+                if ctx.is_extern_proc(e) {
+                    return Err(CheckError::InvalidAssignment { stmt: self.clone() }).with_metadata("You may only directly apply extern procedures");
+                }
+                e.to_mage(ctx)
+            },
             Continue => {
                 Ok("    continue;\n".to_string())
             }
@@ -170,6 +175,9 @@ impl ToMage for Stmt {
                 value,
                 ..
             } => {
+                if ctx.is_extern_proc(value) {
+                    return Err(CheckError::InvalidAssignment { stmt: self.clone() }).with_metadata("Cannot assign an external procedure to a variable, you may only directly apply it");
+                }
                 let mut result = String::new();
                 result += &value.to_mage(ctx)?;
                 let var_size = ctx.get_expr_size(value)?;
@@ -195,6 +203,10 @@ impl ToMage for Stmt {
                 Ok(proc.to_mage(ctx)?)
             }
             AssignVar(name, val) => {
+                if ctx.is_extern_proc(val) {
+                    return Err(CheckError::InvalidAssignment { stmt: self.clone() }).with_metadata("Cannot assign an external procedure to a variable, you may only directly apply it");
+                }
+
                 let mut result = String::new();
                 let val_size = ctx.get_expr_size(val)?;
                 result += &val.to_mage(ctx)?;
@@ -331,8 +343,15 @@ impl ToMage for Expr {
                 if ctx.get_var(name.clone()).is_ok() {
                     let size = ctx.get_var_size(name.clone()).unwrap_or(1);
                     Ok(format!("    clover_pusharr({}, {size});\n", name))
-                } else {
+                } else if ctx.is_proc(self) {
+                    Ok(format!("    clover_push(clover_user_{});\n", name))
+                } else if ctx.is_extern_proc(self) {
                     Ok(format!("    clover_push({});\n", name))
+                } else {
+                    Err(CheckError::VariableNotFound {
+                        name: name.clone(),
+                        expr: self.clone().into()
+                    }).with_metadata("Error while translating var to mage")
                 }
             }
             App(name, args) => {
@@ -345,13 +364,13 @@ impl ToMage for Expr {
                 let expr_ty = ctx.get_expr_type(self)?;
                 let is_unit = ctx.type_equals(&expr_ty, &Type::Unit);
                 // Push the procedure
+                let id = ID::create();
                 if ctx.is_extern_proc(name) {
                     // Get the name of the proc
                     let var = name.as_var().unwrap();
                     // Now, get the params of the extern func
                     let proc = ctx.get_extern_proc(var.clone()).unwrap();
                     // Pop off the params into vars in reverse order
-                    let id = ID::create();
                     for (_mutability, name, _ty) in proc.args.iter().rev() {
                         result += &format!("    let __EXTERN__{}{id} = clover_pop();\n", name);
                     }
@@ -376,7 +395,13 @@ impl ToMage for Expr {
                     // Get the name of the proc
                     let var = name.as_var().unwrap();
                     // Call the function
-                    result += &format!("    {}();\n", var);
+                    result += &format!("    clover_user_{}();\n", var);
+                } else {
+                    // Compile the function
+                    result += &name.to_mage(ctx)?;
+                    // Call the function
+                    result += &format!("    let __EXTERN__func_{id} = clover_pop();\n");
+                    result += &format!("    __EXTERN__func_{id}();\n");
                 }
                 Ok(result)
             }

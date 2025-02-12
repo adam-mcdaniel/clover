@@ -101,6 +101,14 @@ impl Type {
         matches!(self, Type::Union(_))
     }
 
+    pub fn get_element_type(&self) -> Option<&Type> {
+        match self {
+            Type::Pointer(_, ty) => Some(ty),
+            Type::Array(ty, _) => Some(ty),
+            _ => None,
+        }
+    }
+
     fn get_variant_index(&self, variant: &Symbol) -> Result<usize, CheckError> {
         use Type::*;
         match self {
@@ -800,6 +808,12 @@ pub enum CheckError {
     ProcNotFound(Symbol),
     #[error("{0} ({1})")]
     WithMetadata(Box<CheckError>, Metadata),
+
+    /// An invalid assignment
+    #[error("Invalid assignment in {stmt}")]
+    InvalidAssignment {
+        stmt: Stmt,
+    },
 }
 
 pub trait WithMetadata {
@@ -1131,14 +1145,18 @@ impl Env {
             (Array(a_ty, a_size), Array(b_ty, b_size)) => a_size == b_size && self.type_equals_helper(a_ty, b_ty, depth),
 
             (Pointer(a_mut, a_ty), Pointer(b_mut, b_ty)) => {
-                a_mut.can_use_as(*b_mut) && self.type_equals_helper(a_ty, b_ty, depth)
+                a_mut.can_use_as(*b_mut)
+                && (self.type_equals_helper(a_ty, b_ty, depth)
+                    || (match (a_ty.get_element_type(), b_ty.get_element_type()) {
+                        (Some(a_elem_ty), Some(b_elem_ty)) => self.type_equals_helper(a_elem_ty, b_elem_ty, depth),
+                        (Some(a_elem_ty), _) => self.type_equals_helper(a_elem_ty, b_ty, depth),
+                        (_, Some(b_elem_ty)) => self.type_equals_helper(a_ty, b_elem_ty, depth),
+                        _ => false,
+                    }))
+
             },
 
-            (a, b) => {
-                // trace!("Type mismatch: {:?} != {:?}", a, b);
-                // false
-                self.can_coerce_to(a, b) || self.can_coerce_to(b, a)
-            },
+            _ => false,
         }
     }
 
