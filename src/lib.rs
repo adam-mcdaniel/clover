@@ -1406,7 +1406,7 @@ impl Env {
                 };
 
                 // Check if the number of arguments match
-                if arg_tys.len() != args.len() {
+                if arg_tys.len() != param_tys.len() {
                     return Err(MismatchType {
                         expected: Type::Procedure(arg_tys.clone(), Box::new(Type::Unit)),
                         found: f_ty,
