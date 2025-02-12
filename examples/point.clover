@@ -1,5 +1,5 @@
 type Point = struct { x: Int, y: Int, z: Int };
-let p = { x: 1, y: 2, z: 3 };
+let mut p = { x: 1, y: 2, z: 3 };
 
 extern fun putint(n: Int);
 extern fun putchar(c: Char);
@@ -20,16 +20,15 @@ fun test2(p: Point) {
     putchar('\n');
 }
 
-fun shift(mut p: Point, dx: Int, dy: Int, dz: Int) -> Point {
-    p.x = add(p.x, dx);
-    p.y = add(p.y, dy);
-    p.z = add(p.z, dz);
-    return p;
+fun shift(p: &mut Point, dx: Int, dy: Int, dz: Int) {
+    (*p).x = add((*p).x, dx);
+    (*p).y = add((*p).y, dy);
+    (*p).z = add((*p).z, dz);
 }
 
 putint(test(1, 2));
 putchar('\n');
 
 test2(p);
-
-test2(shift(p, 1, 2, 3));
+shift(&mut p, 1, 2, 3);
+test2(p);

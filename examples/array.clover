@@ -8,7 +8,22 @@ fun putln() {
     putchar('\n');
 }
 
-let x = [1, 2, 3, 4, 5];
+let x = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+fun sum(a: &Int, n: Int) -> Int {
+    let mut s = 0;
+    let mut i = 0;
+    while lt(i, n) {
+        s = add(s, a[i]);
+        i = add(i, 1);
+    }
+    return s;
+}
+
+let test = sum;
+
+putint(test(&x, lengthof(x)));
+putln();
 
 putint(x[1]);
 putln();
@@ -23,7 +38,7 @@ fun putpoint(p: Point) {
     putint(p.x);
     putstr(", y: ");
     putint(p.y);
-    putstr("}");
+    putstr(" }");
 }
 
 let p = [{ x: 1, y: 2 }, { x: 3, y: 4 }];

@@ -13,11 +13,11 @@ fun factorial(n: Int) -> Int {
 }
 
 fun main() {
-    let n = 5;
-    putstr("Factorial of ");
+    let n = 3;
+    putstr("Factorial of factorial of ");
     putint(n);
     putstr(" is ");
-    putint(factorial(n));
+    putint(factorial(factorial(n)));
     putln();
 }
 

@@ -37,6 +37,17 @@ fn whitespace<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     take_while(|c: char| c.is_whitespace())(input)
 }
 
+fn parse_unit_literal<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, (), E> {
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag(")")(input)?;
+    let (input, _) = whitespace(input)?;
+    Ok((input, ()))
+}
+
 fn parse_int_literal<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, i64, E> {
@@ -723,6 +734,7 @@ fn parse_expr_atom<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
         parse_string_literal,
         map(parse_float_literal, Expr::Float),
         map(parse_int_literal, Expr::Int),
+        value(Expr::Unit, parse_unit_literal),
         map(parse_char_literal, Expr::Char),
         map(parse_bool, Expr::Bool),
         map(parse_symbol, |s| Expr::Var(s.into())),

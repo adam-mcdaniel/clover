@@ -68,6 +68,7 @@ pub enum Type {
     Char,
     Cell,
     Unit,
+    Slice(Mutability, Box<Type>),
     Pointer(Mutability, Box<Type>),
     Array(Box<Type>, usize),
     Struct(BTreeMap<Symbol, Type>),
@@ -167,6 +168,7 @@ impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Type::Named(name) => write!(f, "{}", name),
+            Type::Slice(mutability, ty) => write!(f, "&{} [{}]", mutability, ty),
             Type::Int => write!(f, "Int"),
             Type::Float => write!(f, "Float"),
             Type::Bool => write!(f, "Bool"),
@@ -908,7 +910,7 @@ impl Env {
                 }
                 self.detect_infinite_size_helper(ret, expr, visited)
             }
-            Type::Pointer(..) | Type::Enum(..) | Type::Bool | Type::Char | Type::Float | Type::Int | Type::Cell | Type::Unit => Ok(()),
+            Type::Slice(..) | Type::Pointer(..) | Type::Enum(..) | Type::Bool | Type::Char | Type::Float | Type::Int | Type::Cell | Type::Unit => Ok(()),
         }
     }
 
@@ -1018,6 +1020,9 @@ impl Env {
                         self.can_coerce_to(&elem_ty, t2)
                         || self.can_coerce_to(t1, t2)
                     }
+                    Type::Cell => {
+                        true
+                    }
                     _ => {
                         // Otherwise, we need to check if the mutability matches
                         self.can_coerce_to(t1, t2)
@@ -1033,6 +1038,12 @@ impl Env {
             }
             (Enum(variants1), Enum(variants2)) => {
                 variants1 == variants2
+            }
+            (Enum(_), Int) => {
+                true
+            }
+            (Pointer(..), Int) => {
+                true
             }
 
             (Union(fields1), Union(fields2)) => {
@@ -1106,6 +1117,10 @@ impl Env {
             (Char, Char) => true,
             (Unit, Unit) => true,
 
+            (Slice(a_mut, a_ty), Slice(b_mut, b_ty)) => {
+                a_mut == b_mut && self.type_equals_helper(a_ty, b_ty, depth)
+            }
+
             (Named(a_name), Named(b_name)) => {
                 a_name == b_name || self.type_equals_helper(self.types.get(a_name).unwrap_or(a), b, depth)
             }
@@ -1170,6 +1185,7 @@ impl Env {
             Enum(variants) => Enum(variants.clone()),
             Union(fields) => Union(fields.iter().map(|(name, ty)| (name.clone(), self.reduce_type(ty))).collect()),
             Procedure(args, ret) => Procedure(args.iter().map(|arg| self.reduce_type(arg)).collect(), Box::new(self.reduce_type(ret))),
+            Slice(mutability, ty) => Slice(*mutability, Box::new(self.reduce_type(ty))),
             Int | Float | Bool | Char | Cell | Unit => ty.clone(),
         }
     }
@@ -1183,6 +1199,7 @@ impl Env {
                 // Confirm the type is an array
                 match ty {
                     Type::Array(_, _) => Ok(Type::Int),
+                    Type::Slice(..) => Ok(Type::Int),
                     _ => Err(LengthOfNonArray {
                         ty,
                         expr: expr.clone().into(),
@@ -1230,7 +1247,6 @@ impl Env {
             }
 
             Ref(desired_mutability, val) => {
-
                 match val.strip_annotations() {
                     Var(name) => {
                         let (found_mutability, ty) = self.get_var(name.clone())?;
@@ -1595,6 +1611,7 @@ impl Env {
                 self.get_type_size(&ty)?
             },
 
+            Slice(_, _) => 2,
             Pointer(_, _) => 1,
 
             Array(ty, len) => self.get_type_size(ty)? * len,

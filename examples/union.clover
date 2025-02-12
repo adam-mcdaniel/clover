@@ -1,0 +1,93 @@
+extern fun malloc(size: Int) -> &mut Cell;
+extern fun putchar(n: Char);
+extern fun putstr(n: &Char);
+
+fun putln() {
+    putchar('\n');
+}
+
+extern fun eq(n: Int, m: Int) -> Bool;
+extern fun streq(n: &Char, m: &Char) -> Bool;
+
+type LambdaType = enum {
+    Abs,
+    App,
+    Var
+};
+
+type LambdaData = union {
+    Abs: struct {
+        param: &Char,
+        body: &Lambda
+    },
+    App: struct {
+        func: &Lambda,
+        arg: &Lambda
+    },
+    Var: &Char
+};
+
+type Lambda = struct {
+    ty: LambdaType,
+    data: LambdaData
+};
+
+
+fun putlambda(l: &Lambda) {
+    let dl = *l;
+    let tag = dl.ty as Int;
+
+    if eq(tag, (LambdaType of Abs) as Int) {
+        let abs = dl.data.Abs;
+        putchar('\\');
+        putstr(abs.param);
+        putchar('.');
+        putlambda(abs.body);
+    } else if eq(tag, (LambdaType of App) as Int) {
+        let app = dl.data.App;
+        putchar('(');
+        putlambda(app.func);
+        putchar(' ');
+        putlambda(app.arg);
+        putchar(')');
+    } else if eq(tag, (LambdaType of Var) as Int) {
+        let var = dl.data.Var;
+        putstr(var);
+    }
+}
+
+fun abs(param: &Char, body: &Lambda) -> &Lambda {
+    let ptr = malloc(sizeof<Lambda>()) as &mut Lambda;
+    *ptr = {
+        ty: LambdaType of Abs,
+        data: LambdaData of Abs { param: param, body: body }
+    };
+    return ptr as &Lambda;
+}
+
+fun app(func: &Lambda, arg: &Lambda) -> &Lambda {
+    let ptr = malloc(sizeof<Lambda>()) as &mut Lambda;
+    *ptr = {
+        ty: LambdaType of App,
+        data: LambdaData of App { func: func, arg: arg }
+    };
+    return ptr as &Lambda;
+}
+
+fun var(name: &Char) -> &Lambda {
+    let ptr = malloc(sizeof<Lambda>()) as &mut Lambda;
+    *ptr = {
+        ty: LambdaType of Var,
+        data: LambdaData of Var name
+    };
+    return ptr as &Lambda;
+}
+
+let k = abs("x", abs("y", var("x")));
+let s = abs("x", abs("y", abs("z", app(app(var("x"), var("z")), app(var("y"), var("z"))))));
+
+putlambda(k);
+putln();
+putln();
+putlambda(s);
+putln();

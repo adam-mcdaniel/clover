@@ -25,6 +25,6 @@ fun putpoint(p: Point) {
     putstr("\n");
 }
 
-let ref_x: &Int = &ps[2].y;
+let ref_x: &Int = &ps[2].x;
 putint(*ref_x);
 putln();

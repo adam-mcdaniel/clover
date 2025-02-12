@@ -4,7 +4,7 @@
 #include <string.h>
 
 int64_t _memcpy(int64_t dst, int64_t src, int64_t len) {
-    memcpy((void*)dst, (void*)src, len);
+    memcpy((void*)dst, (void*)src, len * sizeof(int64_t));
     return 0;
 }
 
@@ -71,4 +71,25 @@ int64_t _gt(int64_t x, int64_t y) {
 
 int64_t _ge(int64_t x, int64_t y) {
     return x >= y;
+}
+
+int64_t _eq(int64_t x, int64_t y) {
+    return x == y;
+}
+
+int64_t _streq(int64_t x, int64_t y) {
+    int64_t *a = (int64_t*)x;
+    int64_t *b = (int64_t*)y;
+    while (*a && *b) {
+        if (*a != *b) {
+            return 0;
+        }
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+int64_t _malloc(int64_t cells) {
+    return (int64_t)malloc(cells * sizeof(int64_t));
 }

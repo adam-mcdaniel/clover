@@ -1,0 +1,20 @@
+extern fun putint(n: Int);
+extern fun putchar(c: Char);
+extern fun add(X: Int, Y: Int) -> Int;
+extern fun lt(X: Int, Y: Int) -> Bool;
+
+let x_data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+let x: {data: &Int, len: Int} = {data: &x_data, len: 5};
+
+
+fun putslice(slice: {data: &Int, len: Int}) {
+    let mut i = 0;
+    while lt(i, slice.len) {
+        putint(slice.data[i]);
+        putchar(' ');
+        i = add(i, 1);
+    }
+    putchar('\n');
+}
+
+putslice(x);

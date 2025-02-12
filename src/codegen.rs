@@ -16,6 +16,7 @@ extern fun clover_sub(clover_a, clover_b);
 extern fun clover_mul(clover_a, clover_b);
 extern fun clover_neg(clover_a);
 extern fun clover_puts(clover_value);
+extern fun clover_puti(clover_value);
 extern fun clover_puthex(clover_value);
 extern fun clover_putarr(clover_ptr, clover_len);
 extern fun clover_putchar(clover_value);
@@ -29,8 +30,14 @@ let static clover_STACK = 0;
 clover_STACK = clover_malloc(1024);
 let static clover_SP = 0;
 
-fun clover_new_scope() {
-    return clover_SP;
+fun clover_new_scope(args_size) {
+    // clover_puts("New scope with size: ");
+    // clover_puti(args_size);
+    // clover_puts(" with SP: ");
+    // clover_puti(clover_SP);
+    // clover_putln();
+
+    return clover_sub(clover_SP, args_size);
 }
 
 fun clover_push(clover_value) {
@@ -74,12 +81,21 @@ fun clover_select(clover_idx_into_struct, clover_idx_len, clover_total_size) {
 }
 
 fun clover_ret(clover_ebp, clover_count) {
+    // clover_puts("Tearing down scope starting at EBP: ");
+    // clover_puti(clover_ebp);
+    // clover_puts(" with SP: ");
+    // clover_puti(clover_SP);
+    // clover_puts(" returning: ");
+    // clover_puti(clover_count);
+    // clover_putln();
+
     let offset = clover_sub(clover_count, 1);
     let clover_current_sp = clover_sub(clover_SP, offset);
-    // clover_Revert clover_stack clover_pointer
-    clover_SP = clover_add(clover_ebp, offset);
-    // clover_Copy return clover_values clover_to clover_stack
-    clover_memcpy(clover_idx(clover_STACK, clover_ebp), clover_idx(clover_STACK, clover_current_sp), clover_count);
+    clover_SP = clover_add(clover_ebp, clover_count);
+    // clover_puts("New SP: ");
+    // clover_puti(clover_SP);
+    // clover_putln();
+    clover_memcpy(clover_idx(clover_STACK, clover_add(clover_ebp, 1)), clover_idx(clover_STACK, clover_current_sp), clover_count);
 }
 "#;
 
@@ -97,13 +113,14 @@ impl ToMage for Procedure {
         let mut total_size = 0;
         for (mutability, name, ty) in self.args.iter().rev() {
             let ty_size = ctx.get_type_size(ty)?;
-            result.push_str(&format!("  let {} = clover_idx(clover_STACK, clover_add(clover_SP, -{}));\n", name, total_size + ty_size - 1));
             total_size += ty_size;
+            result.push_str(&format!("  let {} = clover_idx(clover_STACK, clover_add(clover_SP, -{}));\n", name, total_size - 1));
             new_ctx.add_var(false, name.clone(), *mutability, ty.clone());
         }
         new_ctx.add_proc(self.clone());
 
-        result.push_str("   let clover_ebp = clover_new_scope();\n");
+        // result.push_str(&format!("   clover_puts(\"Calling {}...\n\");\n", self.name));
+        result.push_str(&format!("   let clover_ebp = clover_new_scope({total_size});\n"));
 
         result.push_str(&self.body.to_mage(&mut new_ctx)?);
         result.push_str("}\n");
@@ -386,6 +403,7 @@ impl ToMage for Expr {
                         }
                         result += &format!("__EXTERN__{}{id}", name);
                     }
+
                     if is_unit {
                         result += ");\n";
                     } else {
@@ -400,8 +418,8 @@ impl ToMage for Expr {
                     // Compile the function
                     result += &name.to_mage(ctx)?;
                     // Call the function
-                    result += &format!("    let __EXTERN__func_{id} = clover_pop();\n");
-                    result += &format!("    __EXTERN__func_{id}();\n");
+                    result += &format!("    let __func_{id} = clover_pop();\n");
+                    result += &format!("    __func_{id}();\n");
                 }
                 Ok(result)
             }
@@ -412,7 +430,7 @@ impl ToMage for Expr {
                 let then_mage = then.to_mage(ctx)?;
                 let else_mage = else_.to_mage(ctx)?;
                 result += &cond_mage;
-                result += &format!("    if (clover_pop() != 0) {{\n");
+                result += &format!("    if (clover_pop()) {{\n");
                 result += &then_mage;
                 result += "    } else {\n";
                 result += &else_mage;

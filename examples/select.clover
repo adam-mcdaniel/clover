@@ -1,0 +1,17 @@
+extern fun putint(n: Int);
+
+
+type Point = struct {
+    x: Int,
+    y: Int,
+    z: Int
+};
+
+let p: Point = { x: 1, y: 2, z: 3 };
+
+let pref = &p;
+let prefref = &pref;
+let prefrefref = &prefref;
+
+putint(prefrefref.x);
+
