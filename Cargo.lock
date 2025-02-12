@@ -269,7 +269,7 @@ checksum = "04cbf5b083de1c7e0222a7a51dbfdba1cbe1c6ab0b15e29fff3f6c077fd9cd9f"
 [[package]]
 name = "mage"
 version = "0.1.0"
-source = "git+https://github.com/adam-mcdaniel/mini-sage.git#2131eaea035054acdb4d213ac590e0acac7971d9"
+source = "git+https://github.com/adam-mcdaniel/mage.git#e5638c9da431d5034b7fc0d892344d85b545573b"
 dependencies = [
  "anyhow",
  "clap",

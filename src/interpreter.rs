@@ -5,7 +5,7 @@ use tracing::*;
 use lazy_static::lazy_static;
 
 #[derive(Default)]
-pub struct cloverInterface;
+pub struct CloverInterface;
 
 lazy_static! {
     static ref BUILTINS: HashMap<&'static str, fn(Vec<i64>) -> i64> = {
@@ -170,7 +170,7 @@ lazy_static! {
     };
 }
 
-impl Interface for cloverInterface {
+impl Interface for CloverInterface {
     fn has_extern(&self, name: &str) -> bool {
         BUILTINS.contains_key(name)
     }

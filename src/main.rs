@@ -1,4 +1,4 @@
-use clover::{codegen::ToMage, WithMetadata, cloverInterface, Env};
+use clover::{codegen::ToMage, WithMetadata, CloverInterface, Env};
 use clap::{Parser, ValueEnum};
 use tracing::*;
 use tracing_subscriber::FmtSubscriber;
@@ -282,7 +282,7 @@ fn rgb_text(text: impl Display, color: (u8, u8, u8)) -> String {
     format!("{}{}{}", ansi, text, ansi_reset)
 }
 
-fn eval(mut input: String, i: &mut Interpreter<cloverInterface>, env: &mut Env) -> Result<()> {
+fn eval(mut input: String, i: &mut Interpreter<CloverInterface>, env: &mut Env) -> Result<()> {
     let mut last_input = String::new();
     while input != last_input && !input.trim().is_empty() {
         last_input = input.clone();
@@ -387,7 +387,7 @@ fn repl() -> Result<()> {
     use rustyline::error::ReadlineError;
     clear_screen();
     let mut env = Env::default();
-    let mut i = Interpreter::new(cloverInterface);    
+    let mut i = Interpreter::new(CloverInterface);    
     i.partial_run(&mage::parse(clover::codegen::MAGE_PRELUDE)?)?;
     println!("\nUse the REPL to enter your program statements.\nFor help, input \":help\"\n");
 
@@ -412,7 +412,7 @@ fn repl() -> Result<()> {
                             break;
                         } else if line == ":c" || line == ":clear" {
                             env = Env::default();
-                            i = Interpreter::new(cloverInterface);
+                            i = Interpreter::new(CloverInterface);
                             info!("Environment cleared.");
                             continue;
                         } else if line == ":x" || line == ":examine" {
@@ -536,7 +536,7 @@ fn main() -> Result<()> {
         }
         Backend::Interpreter => {
             info!("Running with interpreter...");
-            let i = Interpreter::new(cloverInterface);
+            let i = Interpreter::new(CloverInterface);
             let _interface = i.run(&mage_parsed).context("Failed to run program")?;
             "".to_string()
         }
