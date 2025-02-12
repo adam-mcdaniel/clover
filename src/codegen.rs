@@ -11,74 +11,75 @@ pub trait ToMage {
 }
 
 // const RETURN_VARIABLE: &str = "__MAGE__return_value";
-pub const MAGE_PRELUDE: &str = r#"extern fun cage_add(cage_a, cage_b);
-extern fun cage_sub(cage_a, cage_b);
-extern fun cage_mul(cage_a, cage_b);
-extern fun cage_neg(cage_a);
-extern fun cage_puts(cage_value);
-extern fun cage_puthex(cage_value);
-extern fun cage_putarr(cage_ptr, cage_len);
-extern fun cage_putchar(cage_value);
-extern fun cage_putln();
-extern fun cage_deref(cage_value);
-extern fun cage_idx(cage_ptr, cage_i);
-extern fun cage_memcpy(cage_dst, cage_src, cage_count);
-extern fun cage_malloc(cage_size);
+pub const MAGE_PRELUDE: &str = r#"extern fun clover_add(clover_a, clover_b);
+extern fun clover_sub(clover_a, clover_b);
+extern fun clover_mul(clover_a, clover_b);
+extern fun clover_neg(clover_a);
+extern fun clover_puts(clover_value);
+extern fun clover_puthex(clover_value);
+extern fun clover_putarr(clover_ptr, clover_len);
+extern fun clover_putchar(clover_value);
+extern fun clover_putln();
+extern fun clover_deref(clover_value);
+extern fun clover_idx(clover_ptr, clover_i);
+extern fun clover_memcpy(clover_dst, clover_src, clover_count);
+extern fun clover_malloc(clover_size);
 
-let static cage_STACK = 0;
-cage_STACK = cage_malloc(1024);
-let static cage_SP = 0;
+let static clover_STACK = 0;
+clover_STACK = clover_malloc(1024);
+let static clover_SP = 0;
 
-fun cage_new_scope() {
-    return cage_SP;
+fun clover_new_scope() {
+    return clover_SP;
 }
 
-fun cage_push(cage_value) {
-    cage_SP = cage_add(cage_SP, 1);
-    cage_idx(cage_STACK, cage_SP) = cage_value;
+fun clover_push(clover_value) {
+    clover_SP = clover_add(clover_SP, 1);
+    clover_idx(clover_STACK, clover_SP) = clover_value;
 }
 
-fun cage_pop() {
-    let cage_value = cage_deref(cage_idx(cage_STACK, cage_SP));
-    cage_SP = cage_add(cage_SP, -1);
-    return cage_value;
+fun clover_pop() {
+    let clover_value = clover_deref(clover_idx(clover_STACK, clover_SP));
+    clover_SP = clover_add(clover_SP, -1);
+    return clover_value;
 }
 
-fun cage_poparr(cage_ptr, cage_count) {
-    while (cage_count) {
-        cage_count = cage_add(cage_count, -1);
-        cage_idx(cage_ptr, cage_count) = cage_pop();
+fun clover_poparr(clover_ptr, clover_count) {
+    while (clover_count) {
+        clover_count = clover_add(clover_count, -1);
+        clover_idx(clover_ptr, clover_count) = clover_pop();
     }
 }
 
-fun cage_pusharr(cage_ptr, cage_count) {
-    let cage_i = 0;
-    while (cage_count) {
-        cage_count = cage_add(cage_count, -1);
-        cage_push(cage_deref(cage_idx(cage_ptr, cage_i)));
-        cage_i = cage_add(cage_i, 1);
+fun clover_pusharr(clover_ptr, clover_count) {
+    let clover_i = 0;
+    while (clover_count) {
+        clover_count = clover_add(clover_count, -1);
+        clover_push(clover_deref(clover_idx(clover_ptr, clover_i)));
+        clover_i = clover_add(clover_i, 1);
     }
 }
 
-fun cage_select(cage_idx_into_struct, cage_idx_len, cage_total_size) {
-    // cage_Leave cage_only cage_the cage_indexed cage_value cage_off cage_the cage_stack
-    let cage_start = cage_add(cage_add(cage_sub(cage_SP, cage_total_size), 1), cage_idx_into_struct);
+fun clover_select(clover_idx_into_struct, clover_idx_len, clover_total_size) {
+    // clover_Leave clover_only clover_the clover_indexed clover_value clover_off clover_the clover_stack
+    let clover_start = clover_add(clover_add(clover_sub(clover_SP, clover_total_size), 1), clover_idx_into_struct);
 
-    // cage_Subtract cage_the cage_total cage_size cage_from cage_the cage_stack cage_pointer
-    cage_SP = cage_sub(cage_SP, cage_total_size);
-    while (cage_idx_len) {
-        cage_push(cage_deref(cage_idx(cage_STACK, cage_start)));
-        cage_start = cage_add(cage_start, 1);
-        cage_idx_len = cage_sub(cage_idx_len, 1);
+    // clover_Subtract clover_the clover_total clover_size clover_from clover_the clover_stack clover_pointer
+    clover_SP = clover_sub(clover_SP, clover_total_size);
+    while (clover_idx_len) {
+        clover_push(clover_deref(clover_idx(clover_STACK, clover_start)));
+        clover_start = clover_add(clover_start, 1);
+        clover_idx_len = clover_sub(clover_idx_len, 1);
     }
 }
 
-fun cage_ret(cage_ebp, cage_count) {
-    let cage_current_sp = cage_sub(cage_SP, cage_count);
-    // cage_Revert cage_stack cage_pointer
-    cage_SP = cage_add(cage_ebp, cage_count);
-    // cage_Copy return cage_values cage_to cage_stack
-    cage_memcpy(cage_idx(cage_STACK, cage_ebp), cage_idx(cage_STACK, cage_current_sp), cage_count);
+fun clover_ret(clover_ebp, clover_count) {
+    let offset = clover_sub(clover_count, 1);
+    let clover_current_sp = clover_sub(clover_SP, offset);
+    // clover_Revert clover_stack clover_pointer
+    clover_SP = clover_add(clover_ebp, offset);
+    // clover_Copy return clover_values clover_to clover_stack
+    clover_memcpy(clover_idx(clover_STACK, clover_ebp), clover_idx(clover_STACK, clover_current_sp), clover_count);
 }
 "#;
 
@@ -96,13 +97,13 @@ impl ToMage for Procedure {
         let mut total_size = 0;
         for (mutability, name, ty) in self.args.iter().rev() {
             let ty_size = ctx.get_type_size(ty)?;
-            result.push_str(&format!("  let {} = cage_idx(cage_STACK, cage_add(cage_SP, -{}));\n", name, total_size + ty_size - 1));
+            result.push_str(&format!("  let {} = clover_idx(clover_STACK, clover_add(clover_SP, -{}));\n", name, total_size + ty_size - 1));
             total_size += ty_size;
             new_ctx.add_var(false, name.clone(), *mutability, ty.clone());
         }
         new_ctx.add_proc(self.clone());
 
-        result.push_str("   let cage_ebp = cage_new_scope();\n");
+        result.push_str("   let clover_ebp = clover_new_scope();\n");
 
         result.push_str(&self.body.to_mage(&mut new_ctx)?);
         result.push_str("}\n");
@@ -147,7 +148,8 @@ impl ToMage for Stmt {
                 let mut result = String::new();
                 let expr_size = ctx.get_expr_size(expr)?;
                 result += &expr.to_mage(ctx)?;
-                result += &format!("    cage_ret(cage_ebp, {expr_size});\n");
+                result += &format!("    clover_ret(clover_ebp, {expr_size});\n");
+                result += &format!("    return 0;\n");
 
                 Ok(result)
             }
@@ -171,7 +173,7 @@ impl ToMage for Stmt {
                 let mut result = String::new();
                 result += &value.to_mage(ctx)?;
                 let var_size = ctx.get_expr_size(value)?;
-                result += &format!("    let {} = cage_idx(cage_STACK, cage_add(cage_SP, -{}));\n", name, var_size - 1);
+                result += &format!("    let {} = clover_idx(clover_STACK, clover_add(clover_SP, -{}));\n", name, var_size - 1);
                 if *is_static {
                     // Pop into a static variable
                     todo!();
@@ -196,7 +198,7 @@ impl ToMage for Stmt {
                 let mut result = String::new();
                 let val_size = ctx.get_expr_size(val)?;
                 result += &val.to_mage(ctx)?;
-                result += &format!("    cage_poparr({}, {});\n", name, val_size);
+                result += &format!("    clover_poparr({}, {});\n", name, val_size);
                 Ok(result)
             }
             AssignRef(ptr, val) => {
@@ -204,7 +206,7 @@ impl ToMage for Stmt {
                 let val_size = ctx.get_expr_size(val)?;
                 result += &val.to_mage(ctx)?;
                 result += &ptr.to_mage(ctx)?;
-                result += &format!("    cage_poparr(cage_pop(), {});\n", val_size);
+                result += &format!("    clover_poparr(clover_pop(), {});\n", val_size);
                 Ok(result)
             }
             While(cond, body) => {
@@ -212,7 +214,7 @@ impl ToMage for Stmt {
                 let cond_mage = cond.to_mage(ctx)?;
                 let body_mage = body.to_mage(ctx)?;
                 result += &cond_mage;
-                result += &format!("    while (cage_pop()) {{\n", );
+                result += &format!("    while (clover_pop()) {{\n", );
                 result += &body_mage;
                 result += &cond_mage;
                 result += "    }\n";
@@ -224,7 +226,7 @@ impl ToMage for Stmt {
                 let then_mage = then.to_mage(ctx)?;
                 let else_mage = else_.to_mage(ctx)?;
                 result += &cond_mage;
-                result += &format!("    if (cage_pop()) {{\n");
+                result += &format!("    if (clover_pop()) {{\n");
                 result += &then_mage;
                 result += "    } else {\n";
                 result += &else_mage;
@@ -262,7 +264,7 @@ impl ToMage for Expr {
                     })
                 };
                 let arr_size = ctx.get_expr_size(expr)?;
-                Ok(format!("    cage_push({});\n", arr_size / elem_size))
+                Ok(format!("    clover_push({});\n", arr_size / elem_size))
             }
 
             LengthOfType(ty) => {
@@ -275,30 +277,30 @@ impl ToMage for Expr {
                     })
                 };
                 let arr_size = ctx.get_type_size(ty)?;
-                Ok(format!("    cage_push({});\n", arr_size / elem_size))
+                Ok(format!("    clover_push({});\n", arr_size / elem_size))
             }
 
             SizeOfExpr(expr) => {
                 let size = ctx.get_expr_size(expr)?;
-                Ok(format!("    cage_push({});\n", size))
+                Ok(format!("    clover_push({});\n", size))
             }
 
             SizeOfType(ty) => {
                 let size = ctx.get_type_size(ty)?;
-                Ok(format!("    cage_push({});\n", size))
+                Ok(format!("    clover_push({});\n", size))
             }
 
             Int(val) => {
-                Ok(format!("    cage_push({});\n", val))
+                Ok(format!("    clover_push({});\n", val))
             }
             Char(val) => {
-                Ok(format!("    cage_push({:?});\n", val))
+                Ok(format!("    clover_push({:?});\n", val))
             }
             Bool(val) => {
-                Ok(format!("    cage_push({});\n", if *val { 1 } else { 0 }))
+                Ok(format!("    clover_push({});\n", if *val { 1 } else { 0 }))
             }
             Float(val) => {
-                Ok(format!("    cage_push({});\n", val))
+                Ok(format!("    clover_push({});\n", val))
             }
             Unit => {
                 Ok(format!(""))
@@ -307,7 +309,7 @@ impl ToMage for Expr {
                 Ok(val.to_mage(ctx)?)
             }
             Str(val) => {
-                let mut result = format!("    cage_push([");
+                let mut result = format!("    clover_push([");
                 for c in val.chars() {
                     result.push_str(&format!("{:?}, ", c));
                 }
@@ -315,7 +317,7 @@ impl ToMage for Expr {
                 Ok(result)
             }
             CStr(val) => {
-                Ok(format!("    cage_push({:?});\n", val))
+                Ok(format!("    clover_push({:?});\n", val))
             }
             Struct(fields) => {
                 let mut result = String::new();
@@ -328,9 +330,9 @@ impl ToMage for Expr {
             Var(name) => {
                 if ctx.get_var(name.clone()).is_ok() {
                     let size = ctx.get_var_size(name.clone()).unwrap_or(1);
-                    Ok(format!("    cage_pusharr({}, {size});\n", name))
+                    Ok(format!("    clover_pusharr({}, {size});\n", name))
                 } else {
-                    Ok(format!("    cage_push({});\n", name))
+                    Ok(format!("    clover_push({});\n", name))
                 }
             }
             App(name, args) => {
@@ -351,13 +353,13 @@ impl ToMage for Expr {
                     // Pop off the params into vars in reverse order
                     let id = ID::create();
                     for (_mutability, name, _ty) in proc.args.iter().rev() {
-                        result += &format!("    let __EXTERN__{}{id} = cage_pop();\n", name);
+                        result += &format!("    let __EXTERN__{}{id} = clover_pop();\n", name);
                     }
                     // Call the extern function
                     if is_unit {
                         result += &format!("    {}(", var);
                     } else {
-                        result += &format!("    cage_push({}(", proc.name);
+                        result += &format!("    clover_push({}(", proc.name);
                     }
                     for (i, (_mutability, name, _ty)) in proc.args.iter().enumerate() {
                         if i > 0 {
@@ -385,7 +387,7 @@ impl ToMage for Expr {
                 let then_mage = then.to_mage(ctx)?;
                 let else_mage = else_.to_mage(ctx)?;
                 result += &cond_mage;
-                result += &format!("    if (cage_pop() != 0) {{\n");
+                result += &format!("    if (clover_pop() != 0) {{\n");
                 result += &then_mage;
                 result += "    } else {\n";
                 result += &else_mage;
@@ -397,7 +399,7 @@ impl ToMage for Expr {
                 let mut result = String::new();
                 result += &ptr.to_mage(ctx)?;
                 let val_size = ctx.get_expr_size(self)?;
-                result += &format!("    cage_pusharr(cage_pop(), {});\n", val_size);
+                result += &format!("    clover_pusharr(clover_pop(), {});\n", val_size);
                 Ok(result)
             }
 
@@ -413,17 +415,17 @@ impl ToMage for Expr {
 
                         let elem_size = ctx.get_type_size(&elem_ty)?;
         
-                        result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
-                        result += &format!("    let __EXTERN__array_{id} = cage_pop();\n");
-                        result += &format!("    cage_pusharr(cage_idx(__EXTERN__array_{id}, cage_mul(__EXTERN__index_{id}, {elem_size})), {elem_size});\n");
+                        result += &format!("    let __EXTERN__index_{id} = clover_pop();\n");
+                        result += &format!("    let __EXTERN__array_{id} = clover_pop();\n");
+                        result += &format!("    clover_pusharr(clover_idx(__EXTERN__array_{id}, clover_mul(__EXTERN__index_{id}, {elem_size})), {elem_size});\n");
                     }
                     Type::Array(elem_ty, _) => {
                         // Get the index into the struct
                         let elem_size = ctx.get_type_size(&elem_ty)?;
                         result += &arr.to_mage(ctx)?;
                         result += &idx.to_mage(ctx)?;
-                        result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
-                        result += &format!("    cage_select(cage_mul(__EXTERN__index_{id}, {elem_size}), {elem_size}, {arr_size});\n");
+                        result += &format!("    let __EXTERN__index_{id} = clover_pop();\n");
+                        result += &format!("    clover_select(clover_mul(__EXTERN__index_{id}, {elem_size}), {elem_size}, {arr_size});\n");
                     }
                     _ => {
                         return Err(CheckError::IndexNonArray {
@@ -439,13 +441,13 @@ impl ToMage for Expr {
                 let mut result = String::new();
                 match &**expr {
                     Expr::Var(name) => {
-                        Ok(format!("    cage_push({name});\n"))
+                        Ok(format!("    clover_push({name});\n"))
                     }
                     Expr::Select(container, field) => {
                         result += Expr::Ref(*desired_mutability, container.clone().into()).to_mage(ctx)?.as_str();
                         let container_ty = ctx.get_expr_type(container)?;
                         let select_offset = ctx.get_field_offset(&container_ty, field)?;
-                        result += &format!("    cage_push(cage_idx(cage_pop(), {select_offset}));\n");
+                        result += &format!("    clover_push(clover_idx(clover_pop(), {select_offset}));\n");
 
                         Ok(result)
                         // match container.strip_annotations() {
@@ -453,7 +455,7 @@ impl ToMage for Expr {
                         //         let container_ty = ctx.get_expr_type(container)?;
                         //         let select_offset = ctx.get_field_offset(&container_ty, field)?;
                         //         result += &container.to_mage(ctx)?;
-                        //         result += &format!("    cage_push(cage_add(cage_pop(), {select_offset}));\n");
+                        //         result += &format!("    clover_push(clover_add(clover_pop(), {select_offset}));\n");
                         //         Ok(result)
                         //     }
                         //     other => {
@@ -474,18 +476,18 @@ impl ToMage for Expr {
                                 result += &idx.to_mage(ctx)?;
                                 let val_size = ctx.get_type_size(&elem_ty)?;
                 
-                                result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
-                                result += &format!("    let __EXTERN__array_{id} = cage_pop();\n");
-                                result += &format!("    cage_push(cage_idx(__EXTERN__array_{id}, cage_mul(__EXTERN__index_{id}, {val_size})));\n");
+                                result += &format!("    let __EXTERN__index_{id} = clover_pop();\n");
+                                result += &format!("    let __EXTERN__array_{id} = clover_pop();\n");
+                                result += &format!("    clover_push(clover_idx(__EXTERN__array_{id}, clover_mul(__EXTERN__index_{id}, {val_size})));\n");
                             }
                             Type::Array(elem_ty, ..) => {
                                 result += &Expr::Ref(*desired_mutability, arr.clone()).to_mage(ctx)?;
                                 result += &idx.to_mage(ctx)?;
                                 let val_size = ctx.get_type_size(&elem_ty)?;
                 
-                                result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
-                                result += &format!("    let __EXTERN__array_{id} = cage_pop();\n");
-                                result += &format!("    cage_push(cage_idx(__EXTERN__array_{id}, cage_mul(__EXTERN__index_{id}, {val_size})));\n");
+                                result += &format!("    let __EXTERN__index_{id} = clover_pop();\n");
+                                result += &format!("    let __EXTERN__array_{id} = clover_pop();\n");
+                                result += &format!("    clover_push(clover_idx(__EXTERN__array_{id}, clover_mul(__EXTERN__index_{id}, {val_size})));\n");
                             }
                             _ => {
                                 return Err(CheckError::InvalidRef { expr: self.clone(), stmt: self.clone().into() }).with_metadata("Error while translating index to mage");
@@ -500,8 +502,8 @@ impl ToMage for Expr {
         
                         //     result += &arr.to_mage(ctx)?;
                         //     result += &idx.to_mage(ctx)?;
-                        //     result += &format!("    let __EXTERN__index_{id} = cage_pop();\n");
-                        //     result += &format!("    cage_select(cage_mul(__EXTERN__index_{id}, {val_size}), {val_size}, {arr_size});\n");
+                        //     result += &format!("    let __EXTERN__index_{id} = clover_pop();\n");
+                        //     result += &format!("    clover_select(clover_mul(__EXTERN__index_{id}, {val_size}), {val_size}, {arr_size});\n");
                         // }
                         Ok(result)
                     }
@@ -509,18 +511,18 @@ impl ToMage for Expr {
                         // Get the size of the value
                         let val_size = ctx.get_expr_size(expr)?;
                         result += &expr.to_mage(ctx)?;
-                        result += &format!("    cage_pusharr(cage_pop(), {val_size});\n");
+                        result += &format!("    clover_pusharr(clover_pop(), {val_size});\n");
                         Ok(result)
                     }
                 }
-                // Ok(format!("    cage_push({name});\n"))
+                // Ok(format!("    clover_push({name});\n"))
             }
             // RefSelect(_, container, field) => {
             //     let mut result = String::new();
             //     let container_ty = ctx.get_var_type(container.clone())?;
             //     // Push the field based on the select offset
             //     let select_offset = ctx.get_field_offset(&container_ty, field)?;
-            //     result += &format!("    cage_push(cage_idx({container}, {select_offset}));\n");
+            //     result += &format!("    clover_push(clover_idx({container}, {select_offset}));\n");
 
             //     Ok(result)
             // }
@@ -541,7 +543,7 @@ impl ToMage for Expr {
                         let val_size = ctx.get_expr_size(self)?;
                         // Push the field based on the select offset
                         let select_offset = ctx.get_field_offset(&container_ty, field)?;
-                        result += &format!("    cage_pusharr(cage_idx({name}, {select_offset}), {val_size});\n");
+                        result += &format!("    clover_pusharr(clover_idx({name}, {select_offset}), {val_size});\n");
                     }
                     other => {
                         // Get the index into the struct
@@ -551,7 +553,7 @@ impl ToMage for Expr {
                         let select_offset = ctx.get_field_offset(&container_ty, field)?;
 
                         result += &other.to_mage(ctx)?;
-                        result += &format!("    cage_select({select_offset}, {val_size}, {container_size});\n");
+                        result += &format!("    clover_select({select_offset}, {val_size}, {container_size});\n");
                     }
                 }
 
@@ -561,7 +563,7 @@ impl ToMage for Expr {
             Enum(ty, variant) => {
                 let mut result = String::new();
                 let variant_offset = ctx.get_variant_index(ty, variant)?;
-                result += &format!("    cage_push({variant_offset});\n");
+                result += &format!("    clover_push({variant_offset});\n");
                 Ok(result)
             }
 
@@ -575,7 +577,7 @@ impl ToMage for Expr {
                 let val_size = ctx.get_expr_size(val)?;
 
                 for _ in val_size..union_size {
-                    result += &format!("    cage_push(0);\n");
+                    result += &format!("    clover_push(0);\n");
                 }
 
                 Ok(result)

@@ -1,4 +1,4 @@
-use cage::{codegen::ToMage, WithMetadata, CageInterface, Env};
+use clover::{codegen::ToMage, WithMetadata, cloverInterface, Env};
 use clap::{Parser, ValueEnum};
 use tracing::*;
 use tracing_subscriber::FmtSubscriber;
@@ -282,11 +282,11 @@ fn rgb_text(text: impl Display, color: (u8, u8, u8)) -> String {
     format!("{}{}{}", ansi, text, ansi_reset)
 }
 
-fn eval(mut input: String, i: &mut Interpreter<CageInterface>, env: &mut Env) -> Result<()> {
+fn eval(mut input: String, i: &mut Interpreter<cloverInterface>, env: &mut Env) -> Result<()> {
     let mut last_input = String::new();
     while input != last_input && !input.trim().is_empty() {
         last_input = input.clone();
-        let (rest, stmt) = cage::parse_single_stmt(&input).context("Failed to parse input")?;
+        let (rest, stmt) = clover::parse_single_stmt(&input).context("Failed to parse input")?;
         input = rest.to_string();
         let mage_program = stmt.to_mage(env).with_metadata("Could not compile to mage")?;
         let mage_parsed = mage::parse(&mage_program).context("Failed to parse mage")?;
@@ -296,7 +296,7 @@ fn eval(mut input: String, i: &mut Interpreter<CageInterface>, env: &mut Env) ->
 }
 
 fn is_valid_input(input: &str) -> bool {
-    cage::parse(input).is_ok()
+    clover::parse(input).is_ok()
 }
 
 fn get_cursor_position() -> std::io::Result<(u16, u16)> {
@@ -387,8 +387,8 @@ fn repl() -> Result<()> {
     use rustyline::error::ReadlineError;
     clear_screen();
     let mut env = Env::default();
-    let mut i = Interpreter::new(CageInterface);    
-    i.partial_run(&mage::parse(cage::codegen::MAGE_PRELUDE)?)?;
+    let mut i = Interpreter::new(cloverInterface);    
+    i.partial_run(&mage::parse(clover::codegen::MAGE_PRELUDE)?)?;
     println!("\nUse the REPL to enter your program statements.\nFor help, input \":help\"\n");
 
     let default_entry = rgb_text(">>> ", (0, 255, 0));
@@ -396,12 +396,12 @@ fn repl() -> Result<()> {
     if let Ok(mut rl) = rustyline::Editor::new() {
         rl.set_helper(Some(MyHighlighter));
 
-        rl.load_history(".cage_history").ok();
+        rl.load_history(".clover_history").ok();
         let mut current_input = String::new();
         let mut current_prompt = default_entry.clone();
         loop {
             let readline = rl.readline(&current_prompt);
-            if rl.save_history(".cage_history").is_err() {
+            if rl.save_history(".clover_history").is_err() {
                 error!("Could not save history");
             }
             match readline {
@@ -412,7 +412,7 @@ fn repl() -> Result<()> {
                             break;
                         } else if line == ":c" || line == ":clear" {
                             env = Env::default();
-                            i = Interpreter::new(CageInterface);
+                            i = Interpreter::new(cloverInterface);
                             info!("Environment cleared.");
                             continue;
                         } else if line == ":x" || line == ":examine" {
@@ -514,8 +514,8 @@ fn main() -> Result<()> {
 
     let input_file = args.input_file.take().unwrap();
     let input = std::fs::read_to_string(&input_file).context("Failed to read input file")?;
-    let cage_program = cage::parse(&input).context("Failed to parse input file")?;
-    let mage_program = cage_program.compile_to_mage(&mut cage::Env::default()).context("Failed to compile cage program")?;
+    let clover_program = clover::parse(&input).context("Failed to parse input file")?;
+    let mage_program = clover_program.compile_to_mage(&mut clover::Env::default()).context("Failed to compile clover program")?;
     let mage_parsed = mage::parse(&mage_program).context("Failed to parse mage program")?;
 
     info!("Compiling {} to {} with target {:?}", input_file, args.output_file, args.target);
@@ -535,7 +535,8 @@ fn main() -> Result<()> {
             mage_program
         }
         Backend::Interpreter => {
-            let i = Interpreter::new(CageInterface);
+            info!("Running with interpreter...");
+            let i = Interpreter::new(cloverInterface);
             let _interface = i.run(&mage_parsed).context("Failed to run program")?;
             "".to_string()
         }
@@ -561,12 +562,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Write `src/libcage.c` to the current dir, and add it to the libraries
+    // Write `src/libclover.c` to the current dir, and add it to the libraries
     std::fs::write(
-        "libcage.c",
-        include_str!("libcage.c")
+        "libclover.c",
+        include_str!("libclover.c")
     )?;
-    args.libraries.push("libcage.c".to_string());
+    args.libraries.push("libclover.c".to_string());
 
     // Compile the file
     let mut cmd = std::process::Command::new("clang");
@@ -594,8 +595,8 @@ fn main() -> Result<()> {
         .arg(path.with_extension("exe"))
         .status()?;
 
-    // Remove libcage.c
-    std::fs::remove_file("libcage.c")?;
+    // Remove libclover.c
+    std::fs::remove_file("libclover.c")?;
     if !status.success() {
         error!("Failed to compile {}", path.display());
         return Err(anyhow::anyhow!("Failed to compile {}", path.display()));

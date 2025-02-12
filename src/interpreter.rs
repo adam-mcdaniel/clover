@@ -5,7 +5,7 @@ use tracing::*;
 use lazy_static::lazy_static;
 
 #[derive(Default)]
-pub struct CageInterface;
+pub struct cloverInterface;
 
 lazy_static! {
     static ref BUILTINS: HashMap<&'static str, fn(Vec<i64>) -> i64> = {
@@ -29,6 +29,10 @@ lazy_static! {
         });
         map.insert("putchar", |args| {
             print!("{}", args[0] as u8 as char);
+            0
+        });
+        map.insert("putln", |_| {
+            println!();
             0
         });
 
@@ -79,7 +83,7 @@ lazy_static! {
             0
         });
 
-        map.insert("cage_idx", |args| {
+        map.insert("clover_idx", |args| {
             let ptr = args[0] as *const i64;
             let idx = args[1] as i64;
             unsafe {
@@ -88,7 +92,7 @@ lazy_static! {
                 result
             }
         });
-        map.insert("cage_memcpy", |args| {
+        map.insert("clover_memcpy", |args| {
             let dst = args[0] as *mut i64;
             let src = args[1] as *const i64;
             let size = args[2] as u64;
@@ -106,7 +110,7 @@ lazy_static! {
             ptr as *const i64 as i64
         });
 
-        map.insert("cage_malloc", |args| {
+        map.insert("clover_malloc", |args| {
             let size = args[0] as usize;
             // Call malloc
             let ptr = Box::into_raw(vec![0; size * 8 + 100].into_boxed_slice());
@@ -120,7 +124,7 @@ lazy_static! {
             0
         });
 
-        map.insert("cage_deref", |args| {
+        map.insert("clover_deref", |args| {
             let ptr = args[0] as *const i64;
             debug!("Dereffing {}", ptr as usize);
             if args[0] == 0 {
@@ -144,12 +148,12 @@ lazy_static! {
         map.insert("le", |args| if args[0] <= args[1] { 1 } else { 0 });
 
         map.insert("add", |args| args[0] + args[1]);
-        map.insert("cage_add", |args| args[0] + args[1]);
+        map.insert("clover_add", |args| args[0] + args[1]);
         map.insert("sub", |args| args[0] - args[1]);
-        map.insert("cage_sub", |args| args[0] - args[1]);
+        map.insert("clover_sub", |args| args[0] - args[1]);
         map.insert("div", |args| args[0] / args[1]);
         map.insert("mul", |args| args[0] * args[1]);
-        map.insert("cage_mul", |args| args[0] * args[1]);
+        map.insert("clover_mul", |args| args[0] * args[1]);
         map.insert("rem", |args| args[0] % args[1]);
 
         map.insert("eq", |args| if args[0] == args[1] { 1 } else { 0 });
@@ -166,7 +170,7 @@ lazy_static! {
     };
 }
 
-impl Interface for CageInterface {
+impl Interface for cloverInterface {
     fn has_extern(&self, name: &str) -> bool {
         BUILTINS.contains_key(name)
     }

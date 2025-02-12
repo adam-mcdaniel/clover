@@ -1,0 +1,30 @@
+type Point = struct {
+    x: Int,
+    y: Int
+};
+extern fun putint(n: Int);
+extern fun putchar(n: Char);
+extern fun putstr(n: &Char);
+
+fun putln() {
+    putchar('\n');
+}
+
+
+let p1: Point = { x: 1, y: 2 };
+let p2: Point = { x: 3, y: 4 };
+let p3: Point = { x: 5, y: 6 };
+let ps = [p1, p2, p3];
+
+fun putpoint(p: Point) {
+    putstr("Point { x: ");
+    putint(p.x);
+    putstr(", y: ");
+    putint(p.y);
+    putstr("}");
+    putstr("\n");
+}
+
+let ref_x: &Int = &ps[2].y;
+putint(*ref_x);
+putln();

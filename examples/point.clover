@@ -20,9 +20,10 @@ fun test2(p: Point) {
     putchar('\n');
 }
 
-fun shift(mut p: Point, dx: Int, dy: Int) -> Point {
+fun shift(mut p: Point, dx: Int, dy: Int, dz: Int) -> Point {
     p.x = add(p.x, dx);
     p.y = add(p.y, dy);
+    p.z = add(p.z, dz);
     return p;
 }
 
@@ -31,4 +32,4 @@ putchar('\n');
 
 test2(p);
 
-test2(shift(p, 1, 2));
+test2(shift(p, 1, 2, 3));

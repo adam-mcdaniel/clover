@@ -1,0 +1,24 @@
+extern fun le(a: Int, b: Int) -> Bool;
+extern fun putint(value: Int);
+extern fun putln();
+extern fun putstr(str: &Char);
+extern fun sub(a: Int, b: Int) -> Int;
+extern fun mul(a: Int, b: Int) -> Int;
+
+fun factorial(n: Int) -> Int {
+    if le(n, 1) {
+        return 1;
+    }
+    return mul(n, factorial(sub(n, 1)));
+}
+
+fun main() {
+    let n = 5;
+    putstr("Factorial of ");
+    putint(n);
+    putstr(" is ");
+    putint(factorial(n));
+    putln();
+}
+
+main();

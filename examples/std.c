@@ -32,6 +32,10 @@ int64_t _neg(int64_t x) {
     return -x;
 }
 
+int64_t _putln() {
+    return putchar('\n');
+}
+
 int64_t _putchar(int64_t x) {
     return putchar(x);
 }

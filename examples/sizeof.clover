@@ -1,0 +1,16 @@
+extern fun putint(n: Int);
+extern fun putchar(c: Char);
+extern fun putstr(c: &Char);
+
+fun putln() {
+    putchar('\n');
+}
+
+type Point = struct {
+    x: Int,
+    y: Int
+};
+
+putstr("Size of Point (in 64 bit words) = ");
+putint(sizeof<Point>());
+putln();
