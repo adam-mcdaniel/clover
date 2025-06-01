@@ -1,0 +1,40 @@
+extern fun malloc(size: Int) -> &mut Cell;  // Memory allocation function
+
+extern fun mul(a: Int, b: Int) -> Int;  // Multiplication function
+extern fun bitxor(a: Int, b: Int) -> Int;  // Bitwise XOR function
+extern fun ne(a: Int, b: Int) -> Bool;  // Not equal function
+
+extern fun puthex(value: Int);  // Function to print an integer
+extern fun putln();  // Function to print a newline
+extern fun putstr(str: &Char);  // Function to print a string
+extern fun putchar(ch: Char);  // Function to print a character
+
+fun hash_str(key: &Char) -> Int {
+    let mut h: Int = 0xcbf29ce484222325;  // Initial hash value
+    let fnv_prime = 0x100000001b3; // FNV prime constant
+    let mut s: &Char = key;  // Pointer to the start of the string
+    while ne((*s) as Int, 0) {
+        h = mul(h, fnv_prime);  // Multiply by the FNV prime
+        h = bitxor(h, (*s) as Int);  // XOR the current character
+        s = &(s[1]);  // Move to the next character
+    }
+    return h;  // Return the computed hash value
+}
+
+fun main() {
+    let mut map: HashMap = struct {
+        buckets: malloc(mul(16, sizeof<HashNode>())) as &mut HashNode,
+        capacity: 16,
+        size: 0
+    };
+
+    putstr("Hashed str with FNV-1a: ");
+    let key = "example";
+    let hash_value: Int = hash_str(key);
+    putstr(key);
+    putstr(" -> ");
+    puthex(hash_value);
+    putln();
+}
+
+main();

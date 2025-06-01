@@ -44,9 +44,14 @@ int64_t _putint(int64_t x) {
     return printf("%lld", x);
 }
 
+int64_t _puthex(int64_t x) {
+    return printf("0x%016llx", x);
+}
+
 int64_t _putcstr(int64_t x) {
     return printf("%s", (char*)x);
 }
+
 int64_t _putstr(int64_t x) {
     int64_t *ptr = (int64_t*)x;
     while (*ptr) {
@@ -75,6 +80,26 @@ int64_t _ge(int64_t x, int64_t y) {
 
 int64_t _eq(int64_t x, int64_t y) {
     return x == y;
+}
+
+int64_t _ne(int64_t x, int64_t y) {
+    return x != y;
+}
+
+int64_t _bitxor(int64_t x, int64_t y) {
+    return x ^ y;
+}
+
+int64_t _bitand(int64_t x, int64_t y) {
+    return x & y;
+}   
+
+int64_t _bitor(int64_t x, int64_t y) {
+    return x | y;
+}
+
+int64_t _bitnot(int64_t x) {
+    return ~x;
 }
 
 int64_t _streq(int64_t x, int64_t y) {

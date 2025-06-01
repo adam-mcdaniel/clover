@@ -12,13 +12,9 @@ fun factorial(n: Int) -> Int {
     return mul(n, factorial(sub(n, 1)));
 }
 
-fun main() {
-    let n = 3;
-    putstr("Factorial of factorial of ");
-    putint(n);
-    putstr(" is ");
-    putint(factorial(factorial(n)));
-    putln();
-}
-
-main();
+let n = 3;
+putstr("Factorial of factorial of ");
+putint(n);
+putstr(" is ");
+putint(factorial(factorial(n)));
+putln();

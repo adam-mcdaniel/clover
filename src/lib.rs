@@ -988,7 +988,11 @@ impl Env {
         use Type::*;
         match (found, desired) {
             (Named(a_name), Named(b_name)) => {
-                a_name == b_name || self.can_coerce_to(self.types.get(a_name).unwrap_or(found), desired)
+                a_name == b_name || if let Some(ty) = self.types.get(a_name) {
+                    self.can_coerce_to(ty, desired)
+                } else {
+                    false
+                }
             }
             (Named(a_name), _) => {
                 if let Some(ty) = self.types.get(a_name) {
@@ -1011,6 +1015,7 @@ impl Env {
                 self.can_coerce_to(t1, t2)
             },
             (Array(t1, _), Pointer(_, t2)) => self.can_coerce_to(t1, t2),
+            
             (Pointer(m1, t1), Pointer(m2, t2)) => {
                 // Check if the found type is an array
                 m1.can_use_as(*m2)

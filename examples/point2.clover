@@ -11,8 +11,7 @@ fun putpoint(p: Point) {
     putint(p.y);
     putstr(", z: ");
     putint(p.z);
-    putstr("}");
-    putstr("\n");
+    putstr(" }\n");
 }
 
 fun make_point(x: Int, y: Int, z: Int) -> Point {

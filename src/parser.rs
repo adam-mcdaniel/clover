@@ -60,15 +60,15 @@ fn parse_int_literal<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
 
     let (input, result) = alt((
         map(preceded(tag("0x"), hex_digit1), |s: &str| {
-            i64::from_str_radix(s, 16).unwrap()
+            u64::from_str_radix(s, 16).unwrap() as i64
         }),
         // Try octal
         map(preceded(tag("0o"), oct_digit1), |s: &str| {
-            i64::from_str_radix(s, 8).unwrap()
+            u64::from_str_radix(s, 8).unwrap() as i64
         }),
         // Try binary
         map(preceded(tag("0b"), bin_digit1), |s: &str| {
-            i64::from_str_radix(s, 2).unwrap()
+            u64::from_str_radix(s, 2).unwrap() as i64
         }),
         map(digit1, |s: &str| s.parse().unwrap()),
     ))(input)?;
